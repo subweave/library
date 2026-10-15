@@ -53,11 +53,15 @@ ASK   "before stopping for longer than a restart, removing or recreating a reth 
 ASK   "before an upgrade that needs a database migration, a resync or config changes"
 ASK   BEFORE resync
 ASK   BEFORE update IF updates == 'ask'
-# Adopted containers have an owner: their lifecycle changes wait for the person,
-# until the person answers `always` for an action.
+# Adopted clients run on a host with an owner: every change waits for the person,
+# until the person answers `always` for that action.
 ASK   BEFORE start IF reth_container
 ASK   BEFORE restart-reth IF reth_container
 ASK   BEFORE restart-lighthouse IF reth_container
+ASK   BEFORE seal IF reth_container
+ASK   BEFORE fence IF reth_container
+ASK   BEFORE free-logs IF reth_container
+ASK   BEFORE sync-clock IF reth_container
 ASK   BEFORE fix IF reth_container
 # reth keeps at least 10064 blocks of state history; fewer is not possible
 ASK   IF blocks < 10064
