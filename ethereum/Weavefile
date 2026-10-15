@@ -467,8 +467,12 @@ FACT logs FOLLOW <<EOF
   fi | grep --line-buffered -E 'WARN|ERRO|CRIT'
 EOF
 
+# Seen on a healthy mainnet node every few minutes: Lighthouse rejecting a late or
+# invalid gossip block, and reth noting Engine API methods Lighthouse does not call.
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
-     "the new lines in `logs` show nothing that needs action; peer churn and a rare reorg are normal"
+     "the new lines in `logs` show nothing that needs action; peer churn, a rejected \
+      gossip block, a note about Engine API methods one client does not use, and a rare \
+      reorg are normal"
 
 # ── Anything else ──────────────────────────────────────
 
