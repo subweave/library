@@ -4,8 +4,7 @@
 
 ```
 subweave run ethereum "mainnet full node, RPC on the private network" --on root@eth1
-subweave run ethereum "mainnet; adopt the docker containers reth and lighthouse, \
-                       reth data in /mnt/reth, lighthouse data in /mnt/lighthouse"
+subweave run ethereum "mainnet; reth container reth, lighthouse container lighthouse, reth data /mnt/reth, lighthouse data /mnt/lighthouse"
 ```
 
 | ARG | Level | Default | Says |
