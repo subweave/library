@@ -42,6 +42,12 @@ installed
 4. **The token is revoked.** Telegraf logs `E!` lines on every flush. `quiet` fails, `restart` runs once, and the next failure that day asks the person.
 5. **Shop 114 gets a third till.** `subweave tell shop-114 "tills 10.0.4.11,10.0.4.12,10.0.4.13"` changes the ARG; `configured` fails, and `configure` rewrites the files.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill store-edge <name>` runs one now).
+
+- `stop`: stops Telegraf; metrics wait in its disk buffer. `running` must fail within 3m and hold again within 10m. Every 30 days.
+
 ## Limits
 
 - A value takes one word of the request, so the till list has commas and no spaces.

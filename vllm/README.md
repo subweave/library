@@ -37,6 +37,12 @@ driver
 4. **Xid 79 at night.** `gpu-healthy` fails. The `nvidia-xid` skill says reboot, and `ASK BEFORE reboot` asks the person first.
 5. **`subweave tell gpu1 "serve Qwen/Qwen3-14B instead"`.** `serving` fails, because `/v1/models` still names the old model, and `serve` moves the service to the new one.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill vllm <name>` runs one now).
+
+- `stop`: stops vLLM; loading the model again takes minutes. `running` must fail within 3m and hold again within 30m. Every 30 days.
+
 ## Limits
 
 - Goals watch the queue, not the answers. A wrong chat template or a bad quantization serves wrong answers with every goal green.

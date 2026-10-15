@@ -50,13 +50,18 @@ ACTION cap-journal "Cap the journal's size" FOR journal WITHIN 5m CHANGES config
 
 # ── Clock ──────────────────────────────────────────────
 
-FACT ntp  BOOL  test "$(timedatectl show -p NTPSynchronized --value)" = yes
+# Sync on, and synchronized: the kernel keeps saying synchronized for hours after sync stops.
+FACT ntp  BOOL  test "$(timedatectl show -p NTP -p NTPSynchronized --value | paste -sd,)" = yes,yes
 
 GOAL clock  "the clock keeps the right time from the internet"  EVERY 1h  ntp
 
 ACTION sync-clock "Turn on clock sync" FOR clock WITHIN 15m CHANGES config
   WHEN "the system clock is not synchronized with NTP"
   RUN  timedatectl set-ntp true
+
+DRILL ntp-off "Turn off clock sync" BREAK timedatectl set-ntp false \
+      EXPECT clock FAILS WITHIN 2h HOLDS WITHIN 3h EVERY 90d
+  RESTORE timedatectl set-ntp true
 
 # ── SSH ────────────────────────────────────────────────
 

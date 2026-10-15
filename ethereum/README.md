@@ -81,6 +81,12 @@ installed
 8. **The coder tries `ufw allow 8551/tcp`.** The gate refuses it ([§5](https://github.com/subweave/subweave/blob/main/LIMITS.md#5-gating-shell-commands-depends-on-their-stated-purpose)). If another change gets through and reth listens beyond localhost, `sealed` fails within a minute.
 9. **Lighthouse crashes on a hard fork its release does not support.** `running` fails. The decider reads `lighthouse.notes` and picks `update` over `start`. Installed: it updates, as `updates` allows. Adopted: `update` is refused, and the person gets a card that says why.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill ethereum <name>` runs one now).
+
+- `cl-stop`: stops Lighthouse. `running` must fail within 3m and hold again within 20m. Every 30 days, only when the weave installed the clients (no `reth_container`): adopted containers are yours.
+
 ## Limits
 
 - `NEEDS` asks for 1 TB, which fits `full`, `minimal` and pruned nodes; `archive` needs about 3 TB. The daemon measures the box's largest disk, wherever `reth_data` is.

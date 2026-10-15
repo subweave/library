@@ -102,6 +102,11 @@ ACTION restart "Restart the server" FOR running, smooth WITHIN 5m CHANGES restar
   RUN  sleep 30
   RUN  systemctl restart minecraft
 
+# Stopping saves the worlds; nobody plays, so nobody is kicked.
+DRILL stop "Stop the server" BREAK systemctl stop minecraft \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 10m EVERY 30d IF players == 0
+  RESTORE systemctl start minecraft
+
 SKILL lag WHEN "low TPS, lag with players online, or the server running out of memory" <<EOF
   20 ticks per second is full speed; under 18 players feel it.
   - Paper ships the spark profiler: mcrcon -c "spark tps", then
@@ -145,9 +150,9 @@ ACTION restore "Restore the newest backup" FOR running, quiet WITHIN 15m CHANGES
   EOF
 
 GOAL drilled  "a backup passed a test restore in the last 30 days" \
-              AFTER saved  EVERY 1d  SINCE(drill) < 30d
+              AFTER saved  EVERY 1d  SINCE(rehearse) < 30d
 
-ACTION drill "Test a restore" FOR drilled WITHIN 30m CHANGES nothing
+ACTION rehearse "Test a restore" FOR drilled WITHIN 30m CHANGES nothing
   WHEN "no world backup was test-restored in the last 30 days"
   RUN <<EOF
     d=$(mktemp -d /var/tmp/drill.XXXXXX)

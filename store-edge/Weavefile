@@ -120,6 +120,11 @@ ACTION restart "Restart Telegraf" FOR running, draining, quiet WITHIN 2m CHANGES
   WHEN "Telegraf stopped, its buffer stopped draining, or it logs errors it does not recover from"
   RUN  systemctl restart telegraf
 
+# Metrics wait in the disk buffer while Telegraf is stopped.
+DRILL stop "Stop Telegraf" BREAK systemctl stop telegraf \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 10m EVERY 30d
+  RESTORE systemctl start telegraf
+
 # ── Firewall ───────────────────────────────────────────
 
 # Telegraf only sends: the shop's network reaches nothing on this box but SSH.

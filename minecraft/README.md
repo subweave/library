@@ -40,6 +40,12 @@ runtime
 4. **`subweave tell club "move to 26.3"`.** The quoted `ASK` compares the ARGs now and after, sees the version change, and asks on the teacher's channel first: a world cannot go back to an older version ([§1](https://github.com/subweave/subweave/blob/main/LIMITS.md#1-numbers-inside-prose)).
 5. **Someone griefs the spawn.** Nothing notices. The teacher runs `subweave do club restore`, says yes, and everyone loses the play since the last backup.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill minecraft <name>` runs one now).
+
+- `stop`: stops the server, which saves the worlds. `running` must fail within 3m and hold again within 10m. Every 30 days, only while nobody plays.
+
 ## Limits
 
 - Backups stay on the box. A lost box loses the world and every backup ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).

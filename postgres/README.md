@@ -49,6 +49,12 @@ One `RUN` step in the file: `systemctl restart`. Every other step is a `DO` task
 6. **`subweave tell db "move to postgres 18"` on a box on 17.** `current` fails, and `upgrade` asks first. `tell db "postgres 16"` is refused: `NEVER IF version < major`.
 7. **The box is lost.** Run the same request `--on` a new box, then `subweave do db restore`.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill postgres <name>` runs one now).
+
+- `stop`: stops PostgreSQL. `running` must fail within 3m and hold again within 10m. Every 30 days.
+
 ## Limits
 
 - No replica. A lost box costs the writes since the last WAL switch, up to `archive_timeout` (60 s), and hours of restore for a large database ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).

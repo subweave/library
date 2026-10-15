@@ -42,6 +42,12 @@ Most facts are `valkey-cli` commands: Valkey reports its state in numbers, and t
 4. **The decider picks `restart` for a 1.8 GB cache.** `ASK BEFORE CHANGES restart IF role == 'cache' AND used > 1GB` asks first, on the agency's channel: a cold cache sends every read to the client's database. The rule holds every action that restarts Valkey: `restart`, `guard`, `patch` and `fix`.
 5. **Someone runs `CONFIG SET maxmemory-policy noeviction` on a cache by hand.** `sized` fails within a minute. `size` runs the commands this box learned when it first passed, in code, with no coder call ([LIMITS §7](https://github.com/subweave/subweave/blob/main/LIMITS.md#7-learned-commands)). On Monday, `subweave inbox` lists the open asks from all 40 boxes in one place.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill valkey <name>` runs one now).
+
+- `stop`: stops Valkey. `running` must fail within 3m and hold again within 10m. Every 30 days, only for a `store`: a cache would lose its keys.
+
 ## Limits
 
 - An answer covers one service. `always` on one client's box does not carry to the other 39.

@@ -122,6 +122,10 @@ ACTION restart "Restart PostgreSQL" FOR running WITHIN 2m CHANGES restart
         or crashed once, and nothing on disk is wrong"
   RUN  systemctl restart postgresql@$version-main
 
+DRILL stop "Stop PostgreSQL" BREAK systemctl stop postgresql@$version-main \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 10m EVERY 30d
+  RESTORE systemctl start postgresql@$version-main
+
 # ── Backups and recovery ───────────────────────────────
 
 FACT archived BOOL "exits 0 when WAL archiving is on and pg_stat_archiver shows an archived segment \
@@ -132,7 +136,7 @@ GOAL archiving  "every change is copied to the backup bucket" \
 GOAL backed     "the newest full backup is less than 25 hours old" \
                 AFTER archiving, box:room   SINCE(backup) < 25h
 GOAL drilled    "a test restore passed in the last 30 days" \
-                AFTER backed     EVERY 1d   SINCE(drill) < 30d
+                AFTER backed     EVERY 1d   SINCE(rehearse) < 30d
 
 ACTION archive "Start copying changes to the bucket" FOR archiving WITHIN 10m CHANGES config, restart
   WHEN "WAL archiving is off, or wal-g is not set up"
@@ -142,7 +146,7 @@ ACTION backup "Take a full backup" FOR backed WITHIN 6h CHANGES data
   WHEN "the newest base backup is older than a day"
   DO   "push a base backup with wal-g, then keep only the newest $keep"
 
-ACTION drill "Test a restore" FOR drilled WITHIN 6h CHANGES nothing
+ACTION rehearse "Test a restore" FOR drilled WITHIN 6h CHANGES nothing
   WHEN "no restore drill passed in the last 30 days"
   DO   "restore the newest base backup and its WAL into a scratch directory, check that it \
         answers queries, then delete it"

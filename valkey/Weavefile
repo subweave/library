@@ -67,6 +67,11 @@ ACTION restart "Restart Valkey" FOR running WITHIN 5m CHANGES restart
   WHEN "valkey-server crashed or hangs"
   RUN  systemctl restart valkey-server
 
+# A store saves its append-only file on stop; a cache would lose its keys.
+DRILL stop "Stop Valkey" BREAK systemctl stop valkey-server \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 10m EVERY 30d IF role == 'store'
+  RESTORE systemctl start valkey-server
+
 # ── Role: memory, eviction, persistence ────────────────
 
 FACT max     NUMBER B  valkey-cli config get maxmemory | tail -1

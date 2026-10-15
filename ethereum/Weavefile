@@ -136,6 +136,11 @@ ACTION start "Start the stopped clients" FOR running WITHIN 15m CHANGES restart
     fi
   EOF
 
+# Adopted containers are yours: the drill stops only clients this weave installed.
+DRILL cl-stop "Stop Lighthouse" BREAK systemctl stop lighthouse \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 20m EVERY 30d IF NOT reth_container
+  RESTORE systemctl start lighthouse
+
 # ── Following the chain ────────────────────────────────
 
 FACT head_age NUMBER s <<EOF

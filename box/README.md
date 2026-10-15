@@ -52,6 +52,12 @@ With `updates` `ask`, `ASK BEFORE CHANGES version` holds `upgrade` for the perso
 3. **A firewall change shuts SSH out.** `ssh` fails, `open-ssh` allows the port again.
 4. **A security update is published.** `pending` rises; within 6 hours `secure` fails and `upgrade` installs it.
 
+## Drills
+
+A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill box <name>` runs one now).
+
+- `ntp-off`: turns off clock sync (`timedatectl set-ntp false`). `clock` must fail within 2h and hold again within 3h. Every 90 days; RESTORE turns sync back on.
+
 ## Limits
 
 - `disk` is one number for all filesystems: a goal reading `box:disk` cannot tell which one is full.

@@ -114,6 +114,11 @@ ACTION restart "Restart vLLM" FOR running, gpu-healthy, quiet WITHIN 15m CHANGES
   WHEN "the engine hung or crashed, or an application Xid error (13, 31, 43) hit a healthy GPU"
   RUN  systemctl restart vllm
 
+# Loading the model again takes minutes; nothing on disk changes.
+DRILL stop "Stop vLLM" BREAK systemctl stop vllm \
+      EXPECT running FAILS WITHIN 3m HOLDS WITHIN 30m EVERY 30d
+  RESTORE systemctl start vllm
+
 ACTION serve "Switch to the requested model" FOR serving WITHIN 1h CHANGES config, restart
   WHEN "the server runs, but serves a model other than $model"
   DO   "change the model in the vllm unit to $model, keeping the other flags \
