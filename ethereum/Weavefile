@@ -1,7 +1,10 @@
-# An Ethereum node: reth for execution, lighthouse for consensus. No validator.
-#   subweave run ethereum "mainnet full node holding only 20000 blocks, RPC on the private network"
+# An Ethereum node: reth for execution, Lighthouse for consensus. No validator.
+# It installs both as systemd units, or adopts two Docker containers that already run.
+#   subweave run ethereum "mainnet full node, RPC on the private network"
+#   subweave run ethereum "mainnet; adopt the docker containers reth and lighthouse, \
+#                          reth data in /mnt/reth, lighthouse data in /mnt/lighthouse"
 
-ABOUT  "Ethereum node: reth for execution, lighthouse for consensus, no validator"
+ABOUT  "Ethereum node: reth for execution, Lighthouse for consensus, no validator"
 FROM   ubuntu:24.04
 NEEDS  8 CPU, 32 GB RAM, 2 TB DISK
 MODEL  CODE deepseek/deepseek-v4-flash-0731 THEN deepseek/deepseek-v4-pro
@@ -12,6 +15,13 @@ ARG network       MUST
     mainnet               "Ethereum mainnet"
     sepolia               "the Sepolia testnet"
     hoodi                 "the Hoodi testnet"
+# Without containers the weave installs both clients. With both, it adopts reth and
+# Lighthouse in them: they run on host networking, and the containers and their images
+# stay their owner's.
+ARG reth_container        MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores"
+ARG lighthouse_container  MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores"
+ARG reth_data=/var/lib/eth/reth              MAY  "reth's database directory on the host, an absolute path like /mnt/reth"
+ARG lighthouse_data=/var/lib/eth/lighthouse  MAY  "Lighthouse's database directory on the host, an absolute path like /mnt/lighthouse"
 ARG history=full  SHOULD
     archive               "every historical state from genesis; about 3 TB on mainnet"
     full                  "current state, and the last 10064 blocks of state history and receipts"
@@ -21,77 +31,224 @@ ARG history=full  SHOULD
 ARG rpc=local     SHOULD
     local                 "JSON-RPC on localhost only"
     private               "JSON-RPC on the private network"
+    open                  "JSON-RPC on every interface; a firewall outside the box, not the box's own, \
+                           decides who reaches it"
 ARG updates=auto  MAY
-    auto                  "install routine and security releases of reth and lighthouse as they come"
+    auto                  "install routine and security releases of reth and Lighthouse as they come"
     ask                   "ask the person before each client update"
+ARG lag=60        MAY     "how many seconds the newest block may trail the clock, a number like 60; \
+                           a slot is 12 seconds"
 
 # ── Rules ──────────────────────────────────────────────
 
 NEVER "run a validator or hold staking keys"
 NEVER "expose the engine API, port 8551, beyond localhost"
-NEVER "open JSON-RPC, port 8545, to the internet"
+NEVER "run ufw allow for port 8545 or 8546 without a from address"
+NEVER "docker kill, docker rm -f or docker restart the reth container"
+NEVER "stop, kill or renice processes other than reth and Lighthouse"
+NEVER "delete files under $reth_data or $lighthouse_data by hand"
+NEVER IF reth_container AND NOT lighthouse_container
+NEVER IF lighthouse_container AND NOT reth_container
+ASK   "before stopping for longer than a restart, removing or recreating a reth or Lighthouse container"
+ASK   "before an upgrade that needs a database migration, a resync or config changes"
 ASK   BEFORE resync
 ASK   BEFORE update IF updates == 'ask'
+# Adopted containers have an owner: their lifecycle changes wait for the person,
+# until the person answers `always` for an action.
+ASK   BEFORE start IF reth_container
+ASK   BEFORE restart-reth IF reth_container
+ASK   BEFORE restart-lighthouse IF reth_container
+ASK   BEFORE fix IF reth_container
 # reth keeps at least 10064 blocks of state history; fewer is not possible
 ASK   IF blocks < 10064
-ASK   "before an upgrade that needs a database migration, a resync or config changes"
-ASK   "before stopping reth or lighthouse for longer than a restart"
 
 # ── Install ────────────────────────────────────────────
 
-FACT clients "exits 0 when the reth and lighthouse binaries are both installed"
+FACT present <<EOF
+  if [ -n "$reth_container" ]; then docker inspect "$reth_container" "$lighthouse_container" > /dev/null
+  else command -v reth && command -v lighthouse; fi
+EOF
 
-GOAL installed  clients
+GOAL installed  present
 
-ACTION install FOR installed WITHIN 30m
-  WHEN "reth or lighthouse is missing"
+ACTION install FOR installed WITHIN 30m IF NOT reth_container
+  WHEN "reth or Lighthouse is missing"
   DO <<EOF
-    Install the latest reth and lighthouse releases from GitHub, after checking their signatures.
-    Run them as the systemd services reth and lighthouse: data in /var/lib/eth,
-    one JWT secret at /etc/eth/jwt.hex. Keep any chain data already in /var/lib/eth.
-    Network: $network. History: $history. JSON-RPC: $rpc.
-    Lighthouse starts from a checkpoint.
+    Install the latest reth and Lighthouse releases from GitHub, after checking their signatures.
+    Run them as the systemd services reth and lighthouse: reth's data in $reth_data, Lighthouse's
+    in $lighthouse_data, one JWT secret at /etc/eth/jwt.hex. Keep any chain data already there.
+    Network: $network. History: $history. JSON-RPC: $rpc. Lighthouse's HTTP API on
+    127.0.0.1:5052. Lighthouse starts from a checkpoint.
   EOF
 
-SKILL eth-install WHEN "installing reth and lighthouse, their systemd units and the JWT secret" <<EOF
+SKILL eth-install WHEN "installing reth and Lighthouse, their systemd units and the JWT secret" <<EOF
   - Release assets: reth-<tag>-x86_64-unknown-linux-gnu.tar.gz and
     lighthouse-<tag>-x86_64-unknown-linux-gnu.tar.gz, each with a .asc signature beside it.
     gpg --verify both before anything runs. A signature that fails: stop, the person decides.
-  - Binaries go to /usr/local/bin, mode 755. Data: /var/lib/eth/reth and /var/lib/eth/lighthouse.
+  - Binaries go to /usr/local/bin, mode 755.
   - One JWT secret for both clients: openssl rand -hex 32 > /etc/eth/jwt.hex, mode 600.
-    reth and lighthouse must read the same file; a mismatch looks like a dead consensus client.
-  - reth: reth node --chain $network --datadir /var/lib/eth/reth \
+    reth and Lighthouse must read the same file; a mismatch looks like a dead consensus client.
+  - reth: reth node --chain $network --datadir $reth_data \
       --authrpc.addr 127.0.0.1 --authrpc.port 8551 --authrpc.jwtsecret /etc/eth/jwt.hex \
-      --http --http.addr <127.0.0.1, or the private address> --http.port 8545 \
+      --http --http.addr <127.0.0.1, the private address, or 0.0.0.0 for open> --http.port 8545 \
       --http.api eth,net,web3 <the history flags of the reth-pruning skill>
+  - Lighthouse: lighthouse bn --network $network --datadir $lighthouse_data \
+      --execution-endpoint http://127.0.0.1:8551 --execution-jwt /etc/eth/jwt.hex \
+      --http --http-address 127.0.0.1 --http-port 5052 --checkpoint-sync-url <the checkpoint-sync skill>
   - Give reth TimeoutStopSec=600 in its unit: a kill in the middle of a write costs a long
-    recovery on the next start.
+    recovery on the next start. Restart=on-failure for both units.
   - Chain data belongs on local NVMe. On network storage or a spinning disk reth never
     catches up.
-  - Keep the clock synced: timedatectl show -p NTPSynchronized must say yes. A drifting clock
-    makes lighthouse miss the head.
 EOF
 
 # ── Running ────────────────────────────────────────────
 
-FACT up  systemctl is-active -q reth lighthouse
+FACT el_up <<EOF
+  if [ -n "$reth_container" ]; then [ "$(docker inspect -f '{{.State.Running}}' "$reth_container")" = true ]
+  else systemctl is-active -q reth; fi
+EOF
+FACT cl_up <<EOF
+  if [ -n "$lighthouse_container" ]; then [ "$(docker inspect -f '{{.State.Running}}' "$lighthouse_container")" = true ]
+  else systemctl is-active -q lighthouse; fi
+EOF
+FACT exits <<EOF
+  if [ -n "$reth_container" ]; then
+    docker inspect -f '{{.Name}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} finished={{.State.FinishedAt}} restarts={{.RestartCount}}' "$reth_container" "$lighthouse_container"
+  else
+    systemctl show -p Id,Result,ExecMainStatus,NRestarts reth lighthouse | paste -sd' '
+  fi
+EOF
 
-GOAL running  AFTER installed  up
+GOAL running  AFTER installed  el_up AND cl_up
 
-ACTION restart FOR running, moving, quiet WITHIN 10m
-  WHEN "a client crashed or hung on a release that ran well before, and nothing on disk is wrong"
-  RUN  systemctl restart reth lighthouse
+ACTION start FOR running WITHIN 15m
+  WHEN "a client stopped or exited, and its last log lines show no full disk and no database error"
+  RUN <<EOF
+    if [ -n "$reth_container" ]; then
+      for c in "$reth_container" "$lighthouse_container"; do
+        [ "$(docker inspect -f '{{.State.Running}}' "$c")" = true ] || docker start "$c"
+      done
+    else
+      for u in reth lighthouse; do systemctl is-active -q "$u" || systemctl restart "$u"; done
+    fi
+  EOF
+
+# ── Following the chain ────────────────────────────────
+
+FACT head_age <<EOF
+  ts=$(curl -sf -m3 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["latest",false]}' \
+    http://127.0.0.1:8545 | grep -o '"timestamp":"0x[0-9a-f]*"' | cut -d'"' -f4)
+  [ -n "$ts" ] && echo $(( $(date +%s) - ts ))
+EOF
+FACT cl_health  curl -s -m3 -o /dev/null -w '%{http_code}' http://127.0.0.1:5052/eth/v1/node/health
+FACT cl_behind  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/syncing | grep -o '"sync_distance":"[0-9]*"' | tr -dc 0-9
+FACT el_syncing <<EOF
+  curl -sf -m3 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"eth_syncing","params":[]}' http://127.0.0.1:8545 \
+    | grep -q '"result":false' && echo no || echo yes
+EOF
+# The decider reads these beside a stalled head: a busy disk is not a broken client.
+FACT io_stall      awk '/^some/ {split($3, a, "="); print a[2]}' /proc/pressure/io
+FACT load_per_cpu  awk -v n="$(nproc)" '{printf "%.2f\n", $1 / n}' /proc/loadavg
+
+# Lighthouse answers 206 while it syncs; reth's eth_syncing says false even when no
+# consensus client drives it any more, so the head's age is the real signal.
+GOAL synced  AFTER running  EVERY 2m  cl_health == 200 AND cl_behind < 64
+GOAL at-tip  AFTER synced   EVERY 1m  head_age < lag
+
+ACTION restart-lighthouse FOR synced, at-tip, quiet WITHIN 10m
+  WHEN "Lighthouse runs but stopped following the chain: a lost engine connection, few peers \
+        or a stall in its log, while the host is not overloaded"
+  RUN <<EOF
+    if [ -n "$lighthouse_container" ]; then docker restart -t 120 "$lighthouse_container"; else systemctl restart lighthouse; fi
+  EOF
+
+ACTION restart-reth FOR at-tip, quiet WITHIN 20m
+  WHEN "reth runs but its head stopped while Lighthouse is synced and sends it blocks, \
+        and the host is not overloaded"
+  RUN <<EOF
+    if [ -n "$reth_container" ]; then docker stop -t 600 "$reth_container" && docker start "$reth_container"
+    else systemctl restart reth; fi
+  EOF
+
+SKILL sync-trouble WHEN "the node is behind, the head stopped moving, or the first sync is slow" <<EOF
+  - head_age is the seconds since the newest block reth holds. A slot is 12 s, so a healthy
+    node stays under about 30. eth_syncing says false even when no consensus client drives
+    reth any more: a frozen head with eth_syncing false means Lighthouse stopped.
+  - A first sync takes hours on a testnet and a day or more on mainnet. While reth's stages
+    run, growing stage progress in the log is progress: wait.
+  - reth logging that it gets no updates from the beacon client: Lighthouse is down, or the
+    two read different JWT files. Compare the --authrpc.jwtsecret and --execution-jwt paths
+    first, inside the containers too (docker inspect shows the mounts).
+  - Lighthouse far behind with reth synced: check peers and the clock first.
+  - A head that stopped after an update: the update is the suspect; rollback before resync.
+  - Restarting reth drops its page cache: it catches up slower for a while. Restart
+    Lighthouse first when it is unclear which client stalled.
+  - Resync is the last resort: it deletes all chain data, and reth's part takes a day or more.
+EOF
+
+SKILL adopted-clients WHEN "reth and Lighthouse run in Docker containers this weave adopted" <<EOF
+  - The containers belong to their owner: the run command, the image and the flags live with
+    them, often in a script beside the box's other services. docker inspect shows the
+    command, mounts, restart policy and log settings; read it before changing anything.
+  - docker start brings back an exited container with the same command. Recreating one
+    (docker rm, docker run) needs the person: the ASK rule applies.
+  - reth: docker stop -t 600, never docker kill or a short timeout. A kill in the middle of a
+    write tears the database and costs hours.
+  - A container with --restart no stays down after a crash, by its owner's choice: read
+    docker logs --tail 200 and the exit code before starting it.
+  - The json-file log driver without max-size grows without bound under /var/lib/docker.
+EOF
+
+SKILL host-load WHEN "the host is slow, IO pressure is high, or reth falls behind while nothing failed" <<EOF
+  - reth needs fast random reads. A build (cargo, docker build), a backup or a scan on the
+    same disks makes it fall behind; restarting reth then makes it worse.
+  - Look: cat /proc/pressure/io /proc/loadavg; ps -eo pid,etime,pcpu,rss,cmd --sort=-pcpu | head -15;
+    find /sys/fs/cgroup/system.slice -maxdepth 1 -name 'system.slice:docker:*' (a running docker build).
+  - Another person's process is theirs: never stop it. Say which process and how long it
+    has run, and ask the person.
+EOF
+
+# ── Peers ──────────────────────────────────────────────
+
+FACT el_peers <<EOF
+  p=$(curl -sf -m3 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"net_peerCount","params":[]}' http://127.0.0.1:8545 \
+    | grep -o '"result":"0x[0-9a-f]*"' | cut -d'"' -f4)
+  [ -n "$p" ] && echo $(( p ))
+EOF
+FACT cl_peers  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/peer_count | grep -o '"connected":"[0-9]*"' | tr -dc 0-9
+
+GOAL peered  AFTER running  EVERY 5m  el_peers >= 5 AND cl_peers >= 10
+
+ACTION add-peers FOR peered WITHIN 30m IF NOT reth_container
+  WHEN "few peers while the p2p ports 30303 and 9000 are closed in the box's firewall"
+  DO   "open the p2p ports in ufw, 30303 for reth and 9000 and 9001 for Lighthouse, then restart both clients"
+
+SKILL p2p WHEN "few peers, p2p ports, NAT and discovery" <<EOF
+  | client     | port  | protocol    |
+  |------------|-------|-------------|
+  | reth       | 30303 | tcp and udp |
+  | lighthouse | 9000  | tcp and udp |
+  | lighthouse | 9001  | udp, QUIC   |
+
+  ufw allow 22/tcp first, then 30303, 9000 and 9001/udp. Peers come back over minutes, not
+  seconds: wait for the next check before doing more.
+  Few peers with open ports: the provider's firewall (outside the box), a wrong clock, or
+  the wrong network. Behind NAT, the router must forward the same ports; only the person can.
+EOF
 
 # ── Engine API and JSON-RPC ────────────────────────────
 
-# The exact listener check is the point: anything but loopback on 8551 counts.
+# Anything but loopback on 8551 counts.
 FACT engine_open  ss -ltnH 'sport = :8551' | awk '$4 !~ /^(127\.0\.0\.1|\[::1\]):/' | wc -l
-FACT rpc_listen   "the addresses reth's JSON-RPC listens on, port 8545"
+FACT rpc_listen   ss -ltnH 'sport = :8545' | awk '{print $4}' | sort -u | paste -sd' '
 FACT firewall     "the active ufw rules for port 8545, or 'inactive'"
 
 GOAL sealed  AFTER running             engine_open == 0
 GOAL fenced  AFTER running  EVERY 1h \
-     "`rpc_listen` and `firewall` allow JSON-RPC exactly as rpc '$rpc' asks, and no wider"
+     "`rpc_listen` and `firewall` let JSON-RPC be reached as rpc '$rpc' says, and no wider"
 
 ACTION seal FOR sealed WITHIN 10m
   WHEN "port 8551 is open beyond localhost"
@@ -110,44 +267,96 @@ SKILL engine-api WHEN "the engine API on port 8551, JSON-RPC on 8545, and who ma
     private: --http.addr <the box's private address>, never 0.0.0.0. The private address is
              the one in 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16: ip -o -4 addr show scope global.
              ufw: allow 22/tcp first, then 8545/tcp from that network only, then enable.
-  - Never add the admin or debug namespaces to --http.api on a shared network.
+    open:    --http.addr 0.0.0.0 is what the person chose; a firewall outside the box guards it.
+  - Never add the admin namespace to --http.api; debug and trace only when the person asked.
 EOF
 
-# ── Peers ──────────────────────────────────────────────
+# ── Disk ───────────────────────────────────────────────
 
-FACT peers "reth's peer count from net_peerCount on localhost:8545, a number"
-
-GOAL peered  AFTER running  EVERY 5m  peers >= 5
-
-ACTION add-peers FOR peered WITHIN 30m
-  WHEN "few peers while the p2p ports 30303 and 9000 are closed"
-  DO   "open the p2p ports in ufw, 30303 for reth and 9000 and 9001 for lighthouse, then restart both clients"
-
-SKILL p2p WHEN "few peers, p2p ports, NAT and discovery" <<EOF
-  | client     | port  | protocol                 |
-  |------------|-------|--------------------------|
-  | reth       | 30303 | tcp and udp              |
-  | lighthouse | 9000  | tcp and udp              |
-  | lighthouse | 9001  | udp, QUIC                |
-
-  ufw allow 30303, ufw allow 9000 and ufw allow 9001/udp. Peers come back over minutes, not
-  seconds: wait for the next check before doing more.
-  Few peers with open ports: the provider's firewall (outside the box), a wrong clock, or
-  the wrong network. Behind NAT, the router must forward the same ports; only the person can.
+FACT el_disk   df --output=pcent "$reth_data" | tail -1 | tr -dc 0-9
+FACT cl_disk   df --output=pcent "$lighthouse_data" | tail -1 | tr -dc 0-9
+FACT log_disk  df --output=pcent /var/log $([ -d /var/lib/docker ] && echo /var/lib/docker) | tail -n +2 | tr -dc '0-9\n' | sort -n | tail -1
+FACT logs_gb <<EOF
+  {
+    du -sb /var/log/journal | cut -f1
+    if [ -n "$reth_container" ]; then
+      for c in "$reth_container" "$lighthouse_container"; do stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")"; done
+    fi
+  } | awk '{s += $1} END {printf "%.1f\n", s / 1e9}'
 EOF
 
-# ── Sync ───────────────────────────────────────────────
+GOAL room  AFTER installed  EVERY 5m  el_disk < 85 AND cl_disk < 85 AND log_disk < 90
 
-FACT behind  "lighthouse's sync distance in slots, from localhost:5052/eth/v1/node/syncing, a number"
-FACT head    "reth's latest block number from eth_blockNumber on localhost:8545, as a decimal number"
+ACTION free-logs FOR room WITHIN 10m IF logs_gb > 2
+  WHEN "logs, not chain data, fill a disk: the systemd journal or a client container's log file"
+  RUN  journalctl --vacuum-size=500M
+  RUN <<EOF
+    if [ -n "$reth_container" ]; then
+      for c in "$reth_container" "$lighthouse_container"; do
+        f=$(docker inspect -f '{{.LogPath}}' "$c")
+        [ "$(stat -c %s "$f")" -lt 1000000000 ] || truncate -s 0 "$f"
+      done
+    fi
+  EOF
 
-GOAL synced  AFTER running  EVERY 10m  behind < 64
-GOAL moving  AFTER synced   EVERY 5m   head > PREV(head)
+SKILL chain-growth WHEN "chain data fills the disk" <<EOF
+  A synced node's data grows every day; only two things make room:
+  - A shorter history (full or minimal, or fewer blocks): pruned data never comes back, and
+    moving between modes is a resync, so the person decides.
+  - A bigger disk: only the person can add one.
+  Never delete files under $reth_data or $lighthouse_data by hand: reth's database then fails to
+  open. Lighthouse stops on a full disk and may need its database rebuilt. Ask the person,
+  with el_disk, cl_disk and the growth in the question.
+EOF
 
-ACTION resync FOR synced, moving WITHIN 2d
+# ── Clock ──────────────────────────────────────────────
+
+FACT ntp  test "$(timedatectl show -p NTPSynchronized --value)" = yes
+
+GOAL clock  AFTER installed  EVERY 1h  ntp
+
+ACTION sync-clock FOR clock WITHIN 15m
+  WHEN "the system clock is not synchronized with NTP"
+  RUN  timedatectl set-ntp true
+
+# ── Updates ────────────────────────────────────────────
+
+FACT outdated "how many of reth and Lighthouse run an older version than their newest GitHub release: \
+               the running versions come from web3_clientVersion on localhost:8545 and \
+               /eth/v1/node/version on localhost:5052; a number"
+FACT releases "the tag and the first 1500 characters of the notes of the newest GitHub release \
+               of paradigmxyz/reth and of sigp/lighthouse"
+
+# With adopted containers the update is the owner's: a newer release goes to the person.
+GOAL current  AFTER synced  EVERY 1d  TRIES 1 PER 7d  outdated == 0
+
+ACTION update FOR current WITHIN 1h IF NOT reth_container
+  WHEN "the newest release is routine or a security fix"
+  DO   "upgrade each client that has a newer release; copy its old binary \
+        to /opt/eth/previous first; restart it"
+
+ACTION rollback FOR running, synced, at-tip WITHIN 15m IF SINCE(update) < 2h
+  WHEN "a client fails since its update: it crashes on start, or logs errors the old release did not"
+  RUN  install -m 755 /opt/eth/previous/* /usr/local/bin/
+  RUN  systemctl restart reth lighthouse
+
+SKILL client-upgrades WHEN "upgrading reth and Lighthouse, and rolling back" <<EOF
+  1. Download the new asset and its .asc; gpg --verify.
+  2. Copy the running binary to /opt/eth/previous/.
+  3. install -m 755 the new binary to /usr/local/bin/, restart only that client.
+  4. The head must move within 15 minutes.
+  Notes that say "migration", "breaking", "re-sync" or "schema": stop; the ASK rule applies.
+  A hard fork needs the new release before its date: a client left behind follows a dead
+  chain. A release note that names a fork for $network is not routine to skip.
+  rollback puts back binaries, not a migrated database.
+EOF
+
+# ── Resync ─────────────────────────────────────────────
+
+ACTION resync FOR synced, at-tip WITHIN 2d IF NOT reth_container
   WHEN "the database is corrupt and a restart did not fix it"
   RUN  systemctl stop reth lighthouse
-  RUN  rm -rf /var/lib/eth/reth /var/lib/eth/lighthouse/beacon
+  RUN  rm -rf "$reth_data" "$lighthouse_data/beacon"
   RUN  systemctl start reth lighthouse
 
 SKILL reth-pruning WHEN "reth node modes and prune settings: archive, full, minimal and a number of blocks" <<EOF
@@ -173,11 +382,7 @@ SKILL reth-pruning WHEN "reth node modes and prune settings: archive, full, mini
   - Methods such as eth_call, eth_getLogs and debug_trace* answer only inside the window.
 EOF
 
-SKILL checkpoint-sync WHEN "starting lighthouse from a recent finalized checkpoint" <<EOF
-      lighthouse bn --network $network --datadir /var/lib/eth/lighthouse \
-        --execution-endpoint http://127.0.0.1:8551 --execution-jwt /etc/eth/jwt.hex \
-        --checkpoint-sync-url <url> --http
-
+SKILL checkpoint-sync WHEN "starting Lighthouse from a recent finalized checkpoint" <<EOF
   | network | url                                            |
   |---------|------------------------------------------------|
   | mainnet | https://mainnet.checkpoint.sigp.io             |
@@ -187,85 +392,22 @@ SKILL checkpoint-sync WHEN "starting lighthouse from a recent finalized checkpoi
   More: https://eth-clients.github.io/checkpoint-sync-endpoints/
   The checkpoint applies only to an empty beacon database. Lighthouse backfills old
   blocks after it follows the head.
-EOF
-
-SKILL sync-trouble WHEN "the node is behind, the head stopped moving, or the first sync is slow" <<EOF
-  - A first sync takes hours on a testnet and a day or more on mainnet. While reth's stages
-    run, a growing head or growing stage progress in the log is progress: wait.
-  - reth logging that it gets no updates from the beacon client: lighthouse is down, or the
-    two read different JWT files. Check /etc/eth/jwt.hex in both units before anything else.
-  - lighthouse far behind with reth synced: check peers and the clock first.
-  - A head that stopped after an update: the update is the suspect; rollback before resync.
-  - Resync is the last resort: it deletes all chain data, and reth's part takes a day or more.
-    Never delete parts of /var/lib/eth/reth by hand.
-EOF
-
-# ── Disk ───────────────────────────────────────────────
-
-FACT disk        "percent used of the filesystem that holds /var/lib/eth, a number"
-FACT journal_gb  "the size of the systemd journal in GB, a number"
-FACT chain_gb    "the size of /var/lib/eth in GB, a number"
-
-GOAL room  AFTER installed  EVERY 5m  disk < 85
-
-ACTION free-disk FOR room WITHIN 10m IF journal_gb > 1
-  WHEN "the systemd journal, not chain data, fills the disk"
-  DO   "shrink the systemd journal to 500 MB"
-
-SKILL chain-growth WHEN "chain data fills the disk" <<EOF
-  A synced node's data grows every day; only two things make room:
-  - A shorter history (full or minimal, or fewer blocks): pruned data never comes back, and
-    moving between modes is a resync, so the person decides.
-  - A bigger disk: only the person can add one.
-  Never delete files under /var/lib/eth/reth or /var/lib/eth/lighthouse by hand: reth's
-  database then fails to open. Ask the person, with chain_gb and disk in the question.
-EOF
-
-# ── Clock ──────────────────────────────────────────────
-
-FACT ntp  test "$(timedatectl show -p NTPSynchronized --value)" = yes
-
-GOAL clock  AFTER installed  EVERY 1h  ntp
-
-ACTION sync-clock FOR clock WITHIN 15m
-  WHEN "the system clock is not synchronized with NTP"
-  RUN  timedatectl set-ntp true
-
-# ── Updates ────────────────────────────────────────────
-
-FACT outdated "how many of reth and lighthouse run a version older than their newest GitHub release, a number"
-FACT releases "the tag and the first 1500 characters of the notes of the newest GitHub release \
-               of paradigmxyz/reth and of sigp/lighthouse"
-
-GOAL current  AFTER synced  EVERY 1d  outdated == 0
-
-ACTION update FOR current WITHIN 1h
-  WHEN "the newest release is routine or a security fix"
-  DO   "upgrade each client that has a newer release; copy its old binary \
-        to /opt/eth/previous first; restart it"
-
-ACTION rollback FOR running, synced, moving WITHIN 15m IF SINCE(update) < 2h
-  WHEN "a client fails since its update: it crashes on start, or logs errors the old release did not"
-  RUN  install -m 755 /opt/eth/previous/* /usr/local/bin/
-  RUN  systemctl restart reth lighthouse
-
-SKILL client-upgrades WHEN "upgrading reth and lighthouse, and rolling back" <<EOF
-  1. Download the new asset and its .asc; gpg --verify.
-  2. Copy the running binary to /opt/eth/previous/.
-  3. install -m 755 the new binary to /usr/local/bin/, restart only that client.
-  4. The head must move within 15 minutes.
-  Notes that say "migration", "breaking", "re-sync" or "schema": stop; the ASK rule applies.
-  A hard fork needs the new release before its date: a client left behind follows a dead
-  chain. A release note that names a fork for $network is not routine to skip.
-  rollback puts back binaries, not a migrated database.
+  Never use a checkpoint URL the person did not give or the list above does not name: a
+  wrong checkpoint makes the node follow a wrong chain.
 EOF
 
 # ── Logs ───────────────────────────────────────────────
 
-FACT logs  FOLLOW "new WARN, ERROR and CRIT lines of the reth and lighthouse journals"
+FACT logs FOLLOW <<EOF
+  if [ -n "$reth_container" ]; then
+    { docker logs -f -n 0 "$reth_container" 2>&1 & docker logs -f -n 0 "$lighthouse_container" 2>&1; }
+  else
+    journalctl -f -n 0 -o cat -u reth -u lighthouse
+  fi | grep --line-buffered -E 'WARN|ERRO|CRIT'
+EOF
 
 GOAL quiet  AFTER running  EVERY 15m \
-     "the new lines in `logs` show nothing that needs action"
+     "the new lines in `logs` show nothing that needs action; peer churn and a rare reorg are normal"
 
 # ── Anything else ──────────────────────────────────────
 

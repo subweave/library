@@ -38,6 +38,6 @@ driver
 
 - Goals watch the queue, not the answers. A wrong chat template or a bad quantization serves wrong answers with every goal green.
 - No software fixes a dead GPU. On a rented GPU, the person opens a ticket with the provider.
-- A spot or preemptible GPU disappears with the daemon on it ([LIMITS §9](../../LIMITS.md#9-one-box-no-failover)).
-- The coder runs as root on a box with your model and tokens ([§11](../../LIMITS.md#11-the-coder-is-a-model-with-a-root-shell)).
+- A spot or preemptible GPU disappears with the daemon on it ([LIMITS §9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).
+- The coder runs as root on a box with your model and tokens ([§11](https://github.com/subweave/subweave/blob/main/LIMITS.md#11-the-coder-is-a-model-with-a-root-shell)).
 - vLLM changes flags between releases, so every vLLM upgrade asks.
