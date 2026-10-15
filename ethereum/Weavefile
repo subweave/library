@@ -122,7 +122,7 @@ FACT exits TEXT <<EOF
   fi
 EOF
 
-GOAL running  "reth and Lighthouse are running"  AFTER installed  el_up AND cl_up
+GOAL running  "reth and Lighthouse are running"  AFTER installed, box:room  el_up AND cl_up
 
 ACTION start "Start the stopped clients" FOR running WITHIN 15m CHANGES restart
   WHEN "a client stopped or exited, and its last log lines show no full disk and no database error"
@@ -160,7 +160,7 @@ FACT load_per_cpu  NUMBER    awk -v n="$(nproc)" '{printf "%.2f\n", $1 / n}' /pr
 GOAL synced  "Lighthouse has caught up with the chain" \
              AFTER running  EVERY 2m  cl_health == 200 AND cl_behind < 64
 GOAL at-tip  "the newest block on the node is less than $lag old" \
-             AFTER synced   EVERY 1m  head_age < lag
+             AFTER synced, box:clock  EVERY 1m  head_age < lag
 
 ACTION restart-lighthouse "Restart Lighthouse" FOR synced, at-tip, quiet WITHIN 10m CHANGES restart
   WHEN "Lighthouse runs but stopped following the chain: a lost engine connection, few peers \
@@ -306,26 +306,24 @@ SKILL engine-api WHEN "the engine API on port 8551, JSON-RPC on 8545, and who ma
   - Never add the admin namespace to --http.api; debug and trace only when the person asked.
 EOF
 
-# ── Disk ───────────────────────────────────────────────
+# ── Logs on disk ───────────────────────────────────────
 
-FACT el_disk   NUMBER %  df --output=pcent "$reth_data" | tail -1 | tr -dc 0-9
-FACT cl_disk   NUMBER %  df --output=pcent "$lighthouse_data" | tail -1 | tr -dc 0-9
-FACT log_disk  NUMBER %  df --output=pcent /var/log $([ -d /var/lib/docker ] && echo /var/lib/docker) | tail -n +2 | tr -dc '0-9\n' | sort -n | tail -1
+# Room on the filesystems is the box weave's goal; this says what the client containers'
+# log files take. Under systemd the clients log to the journal, which the box weave caps.
 FACT logs_gb NUMBER GB <<EOF
   {
-    du -sb /var/log/journal | cut -f1
+    echo 0
     if [ -n "$reth_container" ]; then
       for c in "$reth_container" "$lighthouse_container"; do stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")"; done
     fi
   } | awk '{s += $1} END {printf "%.1f\n", s / 1073741824}'
 EOF
 
-GOAL room  "the disks for chain data and logs have room left" \
-           AFTER installed  EVERY 5m  el_disk < 85% AND cl_disk < 85% AND log_disk < 90%
+GOAL old-logs  "the clients' log files leave the disk room" \
+               AFTER installed  EVERY 10m  box:disk < 85% OR logs_gb < 2GB
 
-ACTION free-logs "Shrink the logs" FOR room WITHIN 10m CHANGES data IF logs_gb > 2GB
-  WHEN "logs, not chain data, fill a disk: the systemd journal or a client container's log file"
-  RUN  journalctl --vacuum-size=500M
+ACTION free-logs "Shrink the client logs" FOR old-logs WITHIN 10m CHANGES data IF logs_gb > 2GB
+  WHEN "a client container's log file, not chain data, takes room on a full disk"
   RUN <<EOF
     if [ -n "$reth_container" ]; then
       for c in "$reth_container" "$lighthouse_container"; do
@@ -342,18 +340,8 @@ SKILL chain-growth WHEN "chain data fills the disk" <<EOF
   - A bigger disk: only the person can add one.
   Never delete files under $reth_data or $lighthouse_data by hand: reth's database then fails to
   open. Lighthouse stops on a full disk and may need its database rebuilt. Ask the person,
-  with el_disk, cl_disk and the growth in the question.
+  with box:disk, the sizes of $reth_data and $lighthouse_data, and the growth in the question.
 EOF
-
-# ── Clock ──────────────────────────────────────────────
-
-FACT ntp  BOOL  test "$(timedatectl show -p NTPSynchronized --value)" = yes
-
-GOAL clock  "the clock keeps the right time from the internet"  AFTER installed  EVERY 1h  ntp
-
-ACTION sync-clock "Turn on clock sync" FOR clock WITHIN 15m CHANGES config
-  WHEN "the system clock is not synchronized with NTP"
-  RUN  timedatectl set-ntp true
 
 # ── Updates ────────────────────────────────────────────
 
@@ -479,7 +467,7 @@ KNOWN quiet NORMAL "2026-10-15T07:44:25.748250Z  WARN rpc::engine: Reth supports
 # ── Anything else ──────────────────────────────────────
 
 # Every goal but current and patched: an update is never a generic fix.
-ACTION fix "Fix the failing goal" FOR installed, running, synced, at-tip, peered, sealed, fenced, room, clock, quiet \
+ACTION fix "Fix the failing goal" FOR installed, running, synced, at-tip, peered, sealed, fenced, quiet \
            WITHIN 30m CHANGES restart, config, data, network
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting chain data or changing the \

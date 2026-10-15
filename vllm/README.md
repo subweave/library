@@ -3,8 +3,11 @@
 **For:** a product team that serves its own open model instead of paying per token. Example: a support-tools startup with one rented 48 GB GPU, serving Qwen3-8B to its app servers.
 
 ```
+subweave run box --on root@gpu1
 subweave run vllm "serve Qwen/Qwen3-8B to our app servers on the private network" --on root@gpu1 --name gpu1
 ```
+
+Disk room, the clock, the systemd journal, SSH and Ubuntu's security updates are the [box](../box) weave's: run it first on each box. `serving` comes AFTER `box:room`; `held` keeps the box's updates off the driver and CUDA.
 
 | ARG | Level | Default | Says |
 |---|---|---|---|
@@ -19,11 +22,11 @@ driver
 ├─ gpu-healthy
 └─ installed
    ├─ running
-   │  ├─ serving
+   │  ├─ serving   also after box:room
    │  ├─ keeping-up
    │  └─ quiet
-   ├─ room
-   └─ patched
+   ├─ old-models
+   └─ held
 ```
 
 ## What happens when

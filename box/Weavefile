@@ -1,0 +1,105 @@
+# What every service on a box shares, kept once per box. Service weaves come AFTER its
+# goals (`AFTER box:room`) and read its facts (`box:disk`).
+#   subweave run box
+
+ABOUT  "the box itself: room on every filesystem, the clock, the systemd journal's size, SSH and Ubuntu's security updates"
+FROM   ubuntu:24.04
+NEEDS  1 CPU, 1 GB RAM, 10 GB DISK
+
+# ── What a request chooses ─────────────────────────────
+
+ARG journal_max=1GB  MAY  "the most disk the systemd journal may take, a size like 1GB or 500MB"
+ARG ssh_port=22      MAY  "the TCP port SSH listens on, a number like 22"
+ARG updates=auto     MAY
+    auto  "install security updates as they come"
+    ask   "ask the person before each round of security updates"
+
+# ── Rules ──────────────────────────────────────────────
+
+NEVER "delete a service's files: its data, databases, chain data, models, backups or buffers"
+NEVER "close the SSH port, stop the SSH server or move it to another port"
+ASK   BEFORE CHANGES version IF updates == 'ask' BECAUSE "you chose to approve each round of security updates"
+
+# ── Room ───────────────────────────────────────────────
+
+# The fullest mounted filesystem, in percent used; memory and image filesystems left out.
+FACT disk     NUMBER %   df -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs | awk 'NR > 1 {sub("%", "", $5); if ($5 + 0 > m) m = $5 + 0} END {print m + 0}'
+FACT apt_mb   NUMBER MB  du -sm /var/cache/apt/archives | cut -f1
+
+GOAL room  "every filesystem is less than 85% full"  EVERY 5m  disk < 85%
+
+ACTION clean "Clear the package cache" FOR room WITHIN 10m CHANGES data IF apt_mb > 100MB
+  WHEN "downloaded package files in the apt cache take room on a full filesystem"
+  RUN  apt-get clean
+
+# ── The journal ────────────────────────────────────────
+
+FACT journal_mb  NUMBER MB  du -scm /var/log/journal /run/log/journal 2>/dev/null | tail -1 | cut -f1
+FACT capped      BOOL       grep -qxF "SystemMaxUse=${journal_max%B}" /etc/systemd/journald.conf.d/50-subweave.conf
+
+GOAL journal  "the systemd journal stays under $journal_max"  EVERY 1h  capped AND journal_mb <= journal_max
+
+ACTION cap-journal "Cap the journal's size" FOR journal WITHIN 5m CHANGES config, data
+  WHEN "journald has no cap of $journal_max, or the journal is larger than that"
+  RUN <<EOF
+    mkdir -p /etc/systemd/journald.conf.d
+    printf '[Journal]\nSystemMaxUse=%s\n' "${journal_max%B}" > /etc/systemd/journald.conf.d/50-subweave.conf
+    systemctl restart systemd-journald
+    journalctl --vacuum-size="${journal_max%B}"
+  EOF
+
+# ── Clock ──────────────────────────────────────────────
+
+FACT ntp  BOOL  test "$(timedatectl show -p NTPSynchronized --value)" = yes
+
+GOAL clock  "the clock keeps the right time from the internet"  EVERY 1h  ntp
+
+ACTION sync-clock "Turn on clock sync" FOR clock WITHIN 15m CHANGES config
+  WHEN "the system clock is not synchronized with NTP"
+  RUN  timedatectl set-ntp true
+
+# ── SSH ────────────────────────────────────────────────
+
+FACT sshd      BOOL  ss -Hltn | awk -v p=":$ssh_port" '$4 ~ p "$" {f = 1} END {exit !f}'
+# Exits 0 when ufw is off or allows SSH, so the daemon opens SSH again after a lockout.
+FACT ssh_open  BOOL  { ufw status 2>/dev/null || true; } \
+                     | awk -v p="$ssh_port" '/^Status: active/ {a = 1} ($1 == p || $1 == p "/tcp" || $1 == "OpenSSH") && ($2 == "ALLOW" || $2 == "LIMIT") {s = 1} END {exit a && !s}'
+
+GOAL ssh  "SSH answers on port $ssh_port and the firewall lets it in"  EVERY 5m  sshd AND ssh_open
+
+ACTION start-ssh "Start the SSH server" FOR ssh WITHIN 2m CHANGES restart IF NOT sshd
+  WHEN "nothing listens on the SSH port"
+  RUN  systemctl enable --now ssh.socket 2>/dev/null || systemctl enable --now ssh
+
+ACTION open-ssh "Allow SSH in the firewall" FOR ssh WITHIN 2m CHANGES network IF NOT ssh_open
+  WHEN "ufw is active and does not allow SSH"
+  RUN  ufw allow "$ssh_port/tcp"
+
+# ── Security updates ───────────────────────────────────
+
+FACT unattended BOOL <<EOF
+  systemctl is-active -q unattended-upgrades &&
+  apt-config dump APT::Periodic::Unattended-Upgrade | grep -q '"1"'
+EOF
+# Security updates apt can install now, without the packages a service weave holds back
+# from unattended upgrades (Unattended-Upgrade::Package-Blacklist).
+FACT pending NUMBER <<EOF
+  held=$(apt-config dump Unattended-Upgrade::Package-Blacklist \
+    | sed -n 's/^Unattended-Upgrade::Package-Blacklist:: "\(.*\)";$/\1/p' | paste -sd'|')
+  apt list --upgradable 2>/dev/null | { grep -- '-security' || true; } | cut -d/ -f1 \
+    | { if [ -n "$held" ]; then grep -Ev "^($held)" || true; else cat; fi; } | wc -l
+EOF
+
+GOAL patched  "Ubuntu installs its security updates by itself" \
+              EVERY 1d  unattended  IF updates == 'auto'
+GOAL secure   "no security update waits"  EVERY 6h  pending == 0
+
+ACTION unattend "Turn on security updates" FOR patched WITHIN 10m CHANGES config
+  WHEN "unattended-upgrades is off or not installed"
+  RUN  apt-get install -y unattended-upgrades
+  RUN  printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+  RUN  systemctl enable --now unattended-upgrades
+
+ACTION upgrade "Install the security updates" FOR secure WITHIN 30m CHANGES version, restart
+  WHEN "security updates wait"
+  RUN  unattended-upgrade

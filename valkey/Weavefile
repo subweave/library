@@ -137,7 +137,7 @@ EOF
 FACT used      NUMBER B  valkey-cli info memory | awk -F: '/^used_memory:/ {print $2}'
 FACT rejected  NUMBER    valkey-cli info stats | awk -F: '/^rejected_connections:/ {print $2}'
 
-GOAL room       "the store is less than 90% full" \
+GOAL headroom   "the store is less than 90% full" \
                 AFTER running  EVERY 5m  used < max * 0.9           IF role == 'store'
 GOAL accepting  "Valkey turns away no new connections" \
                 AFTER running  EVERY 5m  DELTA(rejected) == 0
@@ -163,7 +163,7 @@ EOF
 FACT aof_ok  BOOL  valkey-cli info persistence | grep -q '^aof_last_write_status:ok'
 
 GOAL persisted  "the store saves its data to disk" \
-                AFTER running  EVERY 5m  aof_ok                     IF role == 'store'
+                AFTER running, box:room  EVERY 5m  aof_ok          IF role == 'store'
 GOAL copied     "the newest copy of the data is less than 25 hours old" \
                 AFTER running            SINCE(backup) < 25h        IF copies
 
@@ -191,21 +191,21 @@ EOF
 
 # ── Updates ────────────────────────────────────────────
 
-# Unattended upgrades skip valkey: its update restarts the server, which empties a cache.
-FACT unattended  BOOL    grep -q valkey /etc/apt/apt.conf.d/51subweave-valkey && systemctl is-active -q unattended-upgrades
-FACT pending     NUMBER  apt-get -s upgrade | grep -c '^Inst valkey' || true
+# The box weave installs security updates; they skip valkey here, since its update
+# restarts the server, which empties a cache.
+FACT valkey_held  BOOL    grep -q valkey /etc/apt/apt.conf.d/51subweave-valkey
+FACT pending      NUMBER  apt-get -s upgrade | grep -c '^Inst valkey' || true
 
-GOAL patched  "security updates install by themselves, and no Valkey update waits" \
-              AFTER running  EVERY 1d  unattended AND pending == 0
+GOAL held     "security updates leave Valkey alone"  AFTER running  EVERY 1d  valkey_held
+GOAL current  "no Valkey update waits"               AFTER running  EVERY 1d  pending == 0
 
-ACTION unattend "Turn on security updates" FOR patched WITHIN 10m CHANGES config
-  WHEN "Ubuntu's unattended security upgrades are off"
+ACTION hold "Hold Valkey back from updates" FOR held WITHIN 2m CHANGES config
+  WHEN "unattended upgrades may update valkey"
   ADD <<EOF /etc/apt/apt.conf.d/51subweave-valkey
     Unattended-Upgrade::Package-Blacklist { "valkey"; };
   EOF
-  RUN  apt-get install -y unattended-upgrades && systemctl enable --now unattended-upgrades
 
-ACTION patch "Install the Valkey update" FOR patched WITHIN 15m CHANGES version, restart IF pending > 0
+ACTION patch "Install the Valkey update" FOR current WITHIN 15m CHANGES version, restart IF pending > 0
   WHEN "an Ubuntu update of valkey is pending"
   RUN  apt-get install -y --only-upgrade valkey-server valkey-tools
 

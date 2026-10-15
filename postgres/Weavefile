@@ -67,18 +67,10 @@ EOF
 FACT listen    TEXT "the value of listen_addresses"
 FACT hba       TEXT "the lines of the cluster's pg_hba.conf that are not comments or blank"
 FACT firewall  TEXT "ufw's status, active or inactive, then its rules for port 5432"
-# Exits 0 when ufw is off or allows SSH, so the daemon opens SSH again after a lockout.
-FACT ssh_open  BOOL { ufw status 2>/dev/null || true; } \
-                | awk '/^Status: active/ {a = 1} /^(22(\/tcp)?|OpenSSH) +(ALLOW|LIMIT)/ {s = 1} END {exit a && !s}'
 
 GOAL configured  "PostgreSQL accepts connections only as you chose: $access" \
                  AFTER installed  EVERY 1h \
      "`listen`, `hba` and `firewall` allow connections exactly as access '$access' asks, and no wider"
-GOAL reachable  "the firewall lets SSH in"  ssh_open
-
-ACTION open-ssh "Allow SSH in the firewall" FOR reachable WITHIN 2m CHANGES network
-  WHEN "ufw is active and does not allow SSH"
-  RUN  ufw allow 22/tcp
 
 ACTION configure "Apply the PostgreSQL settings" FOR configured WITHIN 10m CHANGES config, network, restart
   WHEN "a connection, TLS, memory or role setting differs from what the ARGs and this box's size ask"
@@ -138,7 +130,7 @@ FACT archived BOOL "exits 0 when WAL archiving is on and pg_stat_archiver shows 
 GOAL archiving  "every change is copied to the backup bucket" \
                 AFTER running    EVERY 5m   archived               IF bucket
 GOAL backed     "the newest full backup is less than 25 hours old" \
-                AFTER archiving             SINCE(backup) < 25h
+                AFTER archiving, box:room   SINCE(backup) < 25h
 GOAL drilled    "a test restore passed in the last 30 days" \
                 AFTER backed     EVERY 1d   SINCE(drill) < 30d
 
@@ -227,16 +219,17 @@ EOF
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT disk     NUMBER %   "percent used of the filesystem that holds /var/lib/postgresql"
+# Room on the filesystems is the box weave's goal; these say what fills them.
 FACT data_gb  NUMBER GB  "the size of the cluster's data directory without pg_wal"
 FACT wal_gb   NUMBER GB  "the size of the cluster's pg_wal directory"
-FACT logs_gb  NUMBER GB  "the size of /var/log/postgresql and the systemd journal together"
+FACT logs_gb  NUMBER GB  "the size of /var/log/postgresql"
 
-GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 5m  disk < 85%
+GOAL old-logs  "old PostgreSQL logs leave the disk room" \
+               AFTER installed  EVERY 10m  box:disk < 85% OR logs_gb < 1GB
 
-ACTION free-disk "Delete old logs" FOR room WITHIN 10m CHANGES data IF logs_gb > 1GB
-  WHEN "old PostgreSQL logs or the systemd journal, not data or WAL, fill the disk"
-  DO   "delete compressed PostgreSQL logs older than 7 days and shrink the systemd journal to 200 MB"
+ACTION free-logs "Delete old logs" FOR old-logs WITHIN 10m CHANGES data
+  WHEN "old PostgreSQL logs, not data or WAL, take room on a full disk"
+  DO   "delete compressed PostgreSQL logs older than 7 days"
 
 SKILL wal-growth WHEN "pg_wal is large or growing, or WAL fills the disk" <<EOF
   pg_wal grows when PostgreSQL cannot remove old segments:
@@ -247,7 +240,7 @@ SKILL wal-growth WHEN "pg_wal is large or growing, or WAL fills the disk" <<EOF
   - max_wal_size is high: a checkpoint keeps up to that much.
   Never delete files in pg_wal: PostgreSQL then cannot recover from a crash, and the backups
   lose their chain. When the data itself outgrew the disk, only the person can add disk:
-  ask them, with data_gb, wal_gb and disk in the question.
+  ask them, with data_gb, wal_gb and box:disk in the question.
 EOF
 
 # ── Load ───────────────────────────────────────────────

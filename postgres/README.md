@@ -3,8 +3,11 @@
 **For:** a small product team with one database and no DBA. Example: 6 engineers, one Hetzner CPX31, backups in Hetzner Object Storage.
 
 ```
+subweave run box --on root@db1
 subweave run postgres "postgres 18 for our app, private network, backups to s3://acme-pg/db1 on https://fsn1.your-objectstorage.com, keep 14" --on root@db1 --name db
 ```
+
+Disk room, the clock, the systemd journal, SSH and Ubuntu's security updates are the [box](../box) weave's: run it first on each box. `backed` comes AFTER `box:room`.
 
 The daemon asks for the app's password and the two bucket keys once, then installs.
 
@@ -23,7 +26,7 @@ installed
 ├─ configured
 │  └─ running
 │     ├─ archiving   IF bucket
-│     │  └─ backed
+│     │  └─ backed   also after box:room
 │     │     └─ drilled
 │     ├─ connections
 │     ├─ short-tx
@@ -31,11 +34,10 @@ installed
 │     ├─ patched
 │     ├─ current
 │     └─ quiet
-└─ room
-reachable
+└─ old-logs
 ```
 
-Two `RUN` steps in the file: `systemctl restart`, and `ufw allow 22/tcp` when ufw is on without SSH. Every other step is a `DO` task that the box learns once, and 16 of the 19 facts are quoted.
+One `RUN` step in the file: `systemctl restart`. Every other step is a `DO` task that the box learns once, and 15 of the 17 facts are quoted.
 
 ## What happens when
 
@@ -52,6 +54,6 @@ Two `RUN` steps in the file: `systemctl restart`, and `ufw allow 22/tcp` when uf
 - No replica. A lost box costs the writes since the last WAL switch, up to `archive_timeout` (60 s), and hours of restore for a large database ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).
 - Log lines can hold query values, and they go to the model providers ([§10](https://github.com/subweave/subweave/blob/main/LIMITS.md#10-data-on-the-box-leaves-it)).
 - `configured` is a model's reading of `pg_hba.conf` and the firewall. A wrong yes leaves a wrong rule in place.
-- A full data disk runs the log cleanup once before the person is asked ([§4](https://github.com/subweave/subweave/blob/main/LIMITS.md#4-the-decider-rarely-asks-on-its-own)).
+- A full data disk fails `box:room`, and `backed` waits. `old-logs` deletes old logs once before the person is asked ([§4](https://github.com/subweave/subweave/blob/main/LIMITS.md#4-the-decider-rarely-asks-on-its-own)).
 - Extensions such as PostGIS are not an `ARG`: the request check warns, and major upgrades of them are the coder's.
 - No pooler: `end-idle` ends sessions that an app may still hold.

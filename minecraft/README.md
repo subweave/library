@@ -3,8 +3,11 @@
 **For:** someone who runs a game server for other people and is not a sysadmin. Example: a teacher with a 25-student coding club on one rented VPS.
 
 ```
+subweave run box --on root@mc1
 subweave run minecraft "survival server for 25 students, whitelist only, back up every 6 hours" --on root@mc1 --name club
 ```
+
+Disk room, the clock, the systemd journal, SSH and Ubuntu's security updates are the [box](../box) weave's: run it first on each box. `saved` comes AFTER `box:room`.
 
 | ARG | Level | Default | Says |
 |---|---|---|---|
@@ -23,10 +26,10 @@ runtime
 └─ installed
    ├─ running
    │  ├─ smooth
-   │  ├─ saved
+   │  ├─ saved   also after box:room
    │  ├─ current   IF updates == 'auto'
    │  └─ quiet
-   └─ room
+   └─ old-logs
 ```
 
 ## What happens when

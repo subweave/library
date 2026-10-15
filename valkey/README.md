@@ -3,8 +3,11 @@
 **For:** an agency or managed service provider that runs one small box per client. Example: a 5-person agency with 40 client apps, each with its own cache or session store on a 2 GB VM.
 
 ```
+subweave run box --on root@bolt-kv
 subweave run valkey "session store for bolt-bikes, 512 MB, private network, copies to backup@10.0.0.9:/srv/valkey/bolt" --on root@bolt-kv --name bolt-kv
 ```
+
+Disk room, the clock, the systemd journal, SSH and Ubuntu's security updates are the [box](../box) weave's: run it first on each box. `persisted` comes AFTER `box:room`; `held` keeps the box's updates off Valkey, and `current` installs its updates.
 
 | ARG | Level | Default | Says |
 |---|---|---|---|
@@ -20,11 +23,12 @@ installed
 └─ running
    ├─ sized
    ├─ guarded
-   ├─ room   IF role == 'store'
+   ├─ headroom   IF role == 'store'
    ├─ accepting
-   ├─ persisted   IF role == 'store'
+   ├─ persisted   IF role == 'store', also after box:room
    ├─ copied   IF copies
-   ├─ patched
+   ├─ held
+   ├─ current
    └─ quiet
 ```
 
@@ -43,5 +47,5 @@ Most facts are `valkey-cli` commands: Valkey reports its state in numbers, and t
 - An answer covers one service. `always` on one client's box does not carry to the other 39.
 - No replica. A store loses up to about one second of writes in a crash (`appendfsync everysec`), and up to a day when the box is lost ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).
 - The Valkey version is Ubuntu's: 7.2 on 24.04. Newer releases need another package source.
-- `room` for a store has no safe action: deleting keys is a `NEVER`. The coder can only report, so the person decides ([§4](https://github.com/subweave/subweave/blob/main/LIMITS.md#4-the-decider-rarely-asks-on-its-own)).
+- `headroom` for a store has no safe action: deleting keys is a `NEVER`. The coder can only report, so the person decides ([§4](https://github.com/subweave/subweave/blob/main/LIMITS.md#4-the-decider-rarely-asks-on-its-own)).
 - Warning lines can hold client addresses, and they go to the decider ([§10](https://github.com/subweave/subweave/blob/main/LIMITS.md#10-data-on-the-box-leaves-it)).

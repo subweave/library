@@ -110,7 +110,7 @@ FACT logs    LINES      journalctl -f -n 0 -u telegraf | grep --line-buffered -E
 GOAL running   "Telegraf is running" \
                AFTER configured             up
 GOAL draining  "metrics saved on disk reach the central server once it answers" \
-               AFTER running     EVERY 15m  uplink != 204 OR buffer < 50MB OR DELTA(buffer) < 0MB
+               AFTER running, box:room  EVERY 15m  uplink != 204 OR buffer < 50MB OR DELTA(buffer) < 0MB
 # A second failure within a day goes to the person: a restart did not help.
 GOAL quiet     "the logs show no trouble" \
                AFTER running     EVERY 30m  TRIES 1 PER 1d \
@@ -120,38 +120,18 @@ ACTION restart "Restart Telegraf" FOR running, draining, quiet WITHIN 2m CHANGES
   WHEN "Telegraf stopped, its buffer stopped draining, or it logs errors it does not recover from"
   RUN  systemctl restart telegraf
 
-# ── Disk ───────────────────────────────────────────────
-
-FACT disk     NUMBER %   df --output=pcent /var/lib/telegraf | tail -1 | tr -dc 0-9
-FACT junk_mb  NUMBER MB  du -scm /var/log/journal /var/cache/apt/archives | tail -1 | cut -f1
-
-GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90%
-
-ACTION trim "Delete old logs and package files" FOR room WITHIN 5m CHANGES data IF junk_mb > 300MB
-  WHEN "the systemd journal or the apt cache, not Telegraf's buffer, fills the disk"
-  RUN  journalctl --vacuum-size=200M
-  RUN  apt-get clean
-
-# ── Firewall and updates ───────────────────────────────
+# ── Firewall ───────────────────────────────────────────
 
 # Telegraf only sends: the shop's network reaches nothing on this box but SSH.
-FACT ufw         BOOL  ufw status | grep -qx 'Status: active'
-FACT unattended  BOOL  systemctl is-active -q unattended-upgrades
+FACT ufw  BOOL  ufw status | grep -qx 'Status: active'
 
 GOAL fenced   "the firewall is on" \
               AFTER installed  EVERY 1h  ufw
-GOAL patched  "Ubuntu installs security updates by itself" \
-              AFTER installed  EVERY 1d  unattended
 
 ACTION fence "Turn on the firewall" FOR fenced WITHIN 2m CHANGES network
   WHEN "the firewall is off"
   RUN  ufw default deny incoming && ufw default allow outgoing
   RUN  ufw allow 22/tcp && ufw --force enable
-
-ACTION patch "Turn on security updates" FOR patched WITHIN 10m CHANGES config
-  WHEN "Ubuntu's unattended security upgrades are off"
-  RUN  apt-get install -y unattended-upgrades
-  RUN  systemctl enable --now unattended-upgrades
 
 # ── Tills ──────────────────────────────────────────────
 

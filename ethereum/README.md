@@ -3,9 +3,12 @@
 **For:** a team that reads the chain all day. Either it pays a hosted RPC by the request and wants its own node, or it already runs reth and Lighthouse in Docker and wants them watched and repaired.
 
 ```
+subweave run box --on root@eth1
 subweave run ethereum "mainnet full node, RPC on the private network" --on root@eth1
 subweave run ethereum "mainnet; reth container reth, lighthouse container lighthouse, reth data /mnt/reth, lighthouse data /mnt/lighthouse"
 ```
+
+Disk room on every filesystem, the clock, the systemd journal, SSH and security updates are the [box](../box) weave's: run it first on each box. `running` comes AFTER `box:room`, `at-tip` AFTER `box:clock`.
 
 | ARG | Level | Default | Says |
 |---|---|---|---|
@@ -33,22 +36,22 @@ Adopted, two rules by effect do this. `NEVER BEFORE CHANGES version` refuses `in
 
 ```
 installed
-├─ running
+├─ running        also after box:room
 │  ├─ synced
-│  │  ├─ at-tip
+│  │  ├─ at-tip   also after box:clock
 │  │  ├─ current   IF updates == 'auto' OR updates == 'ask'
 │  │  └─ patched   IF updates == 'auto' OR updates == 'security' OR updates == 'ask'
 │  ├─ peered
 │  ├─ sealed
 │  ├─ fenced
 │  └─ quiet
-├─ room
-└─ clock
+└─ old-logs
 ```
 
 - `at-tip` reads the age of reth's newest block. `eth_syncing` says `false` even when no consensus client drives reth any more, so it is not the signal.
 - `synced` reads Lighthouse's `/eth/v1/node/health` and sync distance.
-- `room` checks both data directories and the log disks.
+- `old-logs` reads `box:disk`: on a full disk, container log files over 1 GB go.
+- Other services on the box read the node as `ethereum:head_age` and wait on `ethereum:at-tip`.
 
 ## Updates
 
@@ -74,7 +77,7 @@ installed
 4. **The request names only one container.** `NEVER IF` stops it at `plan`.
 5. **The request says "and run a validator too".** `NEVER "run a validator or hold staking keys"` refuses the whole request.
 6. **First sync.** `install` passes within 30 minutes, then `synced` fails for hours to days; the decider answers `wait`.
-7. **A container's log fills the disk.** `room` fails; `free-logs` vacuums the journal and empties container logs over 1 GB, in code.
+7. **A container's log fills the disk.** `box:room` fails, and `running` and what follows it wait. `old-logs` fails; `free-logs` empties container logs over 1 GB, in code.
 8. **The coder tries `ufw allow 8551/tcp`.** The gate refuses it ([§5](https://github.com/subweave/subweave/blob/main/LIMITS.md#5-gating-shell-commands-depends-on-their-stated-purpose)). If another change gets through and reth listens beyond localhost, `sealed` fails within a minute.
 9. **Lighthouse crashes on a hard fork its release does not support.** `running` fails. The decider reads `lighthouse.notes` and picks `update` over `start`. Installed: it updates, as `updates` allows. Adopted: `update` is refused, and the person gets a card that says why.
 
