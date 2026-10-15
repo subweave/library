@@ -36,7 +36,7 @@ ARG rpc=local     SHOULD
 ARG updates=auto  MAY
     auto                  "install routine and security releases of reth and Lighthouse as they come"
     ask                   "ask the person before each client update"
-    off                   "the clients are built or pinned elsewhere: do not track releases"
+    fix                   "update only when a failure needs a newer release: a bug it fixes, or a hard fork"
 ARG lag=60        MAY     "how many seconds the newest block may trail the clock, a number like 60; \
                            a slot is 12 seconds"
 
@@ -381,13 +381,18 @@ FACT releases <<EOF
   done
 EOF
 
-# With adopted containers the update is the owner's: no action fits, so a newer release
-# goes to the person; `no` leaves it until the next daily check.
+# `current` tracks releases; with updates=fix it is off, and `update` waits for a failure
+# only a newer release fixes. With adopted containers the update is the owner's: the
+# decider still names it, and the person gets it as the fix.
 GOAL current  "reth and Lighthouse run their newest releases" \
-              AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'  IF updates != 'off'
+              AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'  IF updates != 'fix'
 
-ACTION update "Update reth and Lighthouse" FOR current WITHIN 1h IF NOT reth_container
-  WHEN "the newest release is routine or a security fix"
+ACTION update "Update reth and Lighthouse" FOR current, running, synced, at-tip, quiet \
+              WITHIN 1h IF NOT reth_container
+  WHEN "`behind` names a newer release, and either the failing goal is current and the \
+        release is routine or a security fix, or the `releases` notes say the newer \
+        release fixes what fails now: a crash, an error in `logs`, a hard fork the running \
+        release does not support"
   DO   "upgrade each client that has a newer release; copy its old binary \
         to /opt/eth/previous first; restart it"
 
