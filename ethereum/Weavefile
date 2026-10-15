@@ -247,22 +247,38 @@ EOF
 
 # Anything but loopback on 8551 counts.
 FACT engine_open  ss -ltnH 'sport = :8551' | awk '$4 !~ /^(127\.0\.0\.1|\[::1\]):/' | wc -l
-FACT rpc_listen   ss -ltnH 'sport = :8545' | awk '{print $4}' | sort -u | paste -sd' '
-FACT firewall <<EOF
-  if command -v ufw > /dev/null && ufw status | grep -q '^Status: active'; then
-    rules=$(ufw status | grep -E '^(8545|8546)[/ ]' | tr -s ' ' | paste -sd';' || true)
-    incoming=$(ufw status verbose | grep -o '[a-z]* (incoming)' || true)
-    echo "ufw active, default ${incoming:-unknown}; ${rules:-no rule for 8545 or 8546}"
-  else
-    echo inactive
-  fi
+# How far JSON-RPC (8545, 8546) reaches: local, private or public. An address beyond
+# loopback counts only where the box's firewall lets it in; Docker-published ports skip ufw.
+FACT rpc_reach <<EOF
+  reach=local
+  widen() { case "$reach/$1" in local/*) reach=$1 ;; private/public) reach=public ;; esac; }
+  ufw_denies=no
+  if command -v ufw > /dev/null && ufw status verbose | grep -q '^Status: active' \
+     && ufw status verbose | grep -q 'deny (incoming)'; then ufw_denies=yes; fi
+  found=$(for port in 8545 8546; do
+    ss -ltnpH "sport = :$port" | while read -r _ _ _ local _ users; do
+      addr=$(echo "${local%:*}" | tr -d '[]')
+      case "$addr" in 127.*|::1) continue ;; esac
+      if [ $ufw_denies = yes ] && ! echo "$users" | grep -q docker-proxy; then
+        from=$(ufw status | grep -E "^$port(/tcp)?( \(v6\))? +ALLOW( IN)? " \
+          | sed -E 's/.*ALLOW( IN)? +//' || true)
+        if echo "$from" | grep -q Anywhere; then echo public
+        elif [ -n "$from" ]; then echo private; fi
+        continue
+      fi
+      case "$addr" in
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|fd*) echo private ;;
+        *) echo public ;;
+      esac
+    done
+  done)
+  for r in $found; do widen "$r"; done
+  echo "$reach"
 EOF
 
 GOAL sealed  AFTER running             engine_open == 0
-GOAL fenced  AFTER running  EVERY 1h \
-     "JSON-RPC on ports 8545 and 8546 is reachable as rpc '$rpc' says, and no wider. A port is \
-      reachable from outside when `rpc_listen` shows an address other than 127.0.0.1 or [::1] \
-      and `firewall` is inactive or has a rule that allows it"
+GOAL fenced  AFTER running  EVERY 1h   rpc_reach == 'local' OR rpc == 'open' \
+                                        OR (rpc == 'private' AND rpc_reach == 'private')
 
 ACTION seal FOR sealed WITHIN 10m
   WHEN "port 8551 is open beyond localhost"
