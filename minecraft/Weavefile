@@ -29,8 +29,8 @@ SECRET MCRCON_PASS "the RCON password"
 NEVER "op a player, or change the whitelist or bans"
 NEVER "delete or reset a world"
 NEVER "open the RCON port 25575 to the internet"
-NEVER IF keep < 1
-ASK   BEFORE restore
+NEVER IF keep < 1 BECAUSE "the weave keeps at least one world backup"
+ASK   BEFORE restore BECAUSE "a restore replaces the live world"
 ASK   "before installing Paper for a Minecraft version other than $version: a world cannot go back to an older one"
 
 # ── Install ────────────────────────────────────────────
@@ -38,14 +38,14 @@ ASK   "before installing Paper for a Minecraft version other than $version: a wo
 FACT java   "exits 0 when java runs and its major release is 25 or newer"
 FACT paper  test -f /opt/minecraft/paper.jar
 
-GOAL runtime                   java
-GOAL installed  AFTER runtime  paper
+GOAL runtime    "Java 25 or newer is installed"  java
+GOAL installed  "Paper is installed"  AFTER runtime  paper
 
-ACTION install-java FOR runtime WITHIN 10m
+ACTION install-java "Install Java" FOR runtime WITHIN 10m
   WHEN "Java 25 is missing"
   RUN  apt-get install -y openjdk-25-jre-headless
 
-ACTION install FOR installed WITHIN 20m
+ACTION install "Install Paper" FOR installed WITHIN 20m
   WHEN "Paper is missing"
   DO <<EOF
     Create the user minecraft and /opt/minecraft. Keep any worlds already there.
@@ -91,10 +91,12 @@ FACT rcon     mcrcon -c list > /dev/null
 FACT players  "the number of players online, from mcrcon -c list"
 FACT tps      "the 1-minute ticks per second that mcrcon -c tps prints first, a number"
 
-GOAL running  AFTER installed             up AND rcon
-GOAL smooth   AFTER running    EVERY 5m   players == 0 OR tps >= 18
+GOAL running  "the server runs and answers commands" \
+              AFTER installed             up AND rcon
+GOAL smooth   "the server runs at full speed while people play" \
+              AFTER running    EVERY 5m   players == 0 OR tps >= 18
 
-ACTION restart FOR running, smooth WITHIN 5m
+ACTION restart "Restart the server" FOR running, smooth WITHIN 5m
   WHEN "the server crashed or stays slow on a build that ran well before, and its worlds load"
   RUN  mcrcon -c "say Restarting in 30 seconds" || true
   RUN  sleep 30
@@ -116,9 +118,9 @@ EOF
 
 # ── Backups ────────────────────────────────────────────
 
-GOAL saved  AFTER running  SINCE(backup) < backups
+GOAL saved  "a world backup was made in the last $backups"  AFTER running  SINCE(backup) < backups
 
-ACTION backup FOR saved WITHIN 30m
+ACTION backup "Back up the world" FOR saved WITHIN 30m
   WHEN "the last world backup is older than $backups"
   RUN <<EOF
     mkdir -p /var/backups/minecraft
@@ -129,7 +131,7 @@ ACTION backup FOR saved WITHIN 30m
   EOF
   RUN  ls -1t /var/backups/minecraft/world-*.tgz | tail -n +$((keep + 1)) | xargs -r rm
 
-ACTION restore FOR running, quiet WITHIN 15m
+ACTION restore "Restore the newest backup" FOR running, quiet WITHIN 15m
   WHEN "a corrupt world stops the server from starting"
   RUN <<EOF
     systemctl stop minecraft
@@ -142,9 +144,10 @@ ACTION restore FOR running, quiet WITHIN 15m
     systemctl start minecraft
   EOF
 
-GOAL drilled  AFTER saved  EVERY 1d  SINCE(drill) < 30d
+GOAL drilled  "a backup passed a test restore in the last 30 days" \
+              AFTER saved  EVERY 1d  SINCE(drill) < 30d
 
-ACTION drill FOR drilled WITHIN 30m
+ACTION drill "Test a restore" FOR drilled WITHIN 30m
   WHEN "no world backup was test-restored in the last 30 days"
   RUN <<EOF
     d=$(mktemp -d /var/tmp/drill.XXXXXX)
@@ -172,9 +175,9 @@ EOF
 FACT disk     "percent used of the filesystem that holds /opt/minecraft, a number"
 FACT logs_gb  "the size of /opt/minecraft/logs and the systemd journal together, in GB, a number"
 
-GOAL room  AFTER installed  EVERY 10m  disk < 85
+GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 10m  disk < 85
 
-ACTION trim FOR room WITHIN 10m IF logs_gb > 1
+ACTION trim "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1
   WHEN "old server logs or the systemd journal, not worlds or backups, fill the disk"
   DO   "delete compressed server logs in /opt/minecraft/logs older than 14 days \
         and shrink the systemd journal to 200 MB"
@@ -186,15 +189,15 @@ FACT skip    cat /opt/minecraft/skip-build
 FACT latest  curl -s https://fill.papermc.io/v3/projects/paper/versions/$version/builds/latest \
                | jq -r .id
 
-GOAL current  AFTER running  EVERY 1h \
+GOAL current  "the server runs the newest Paper build"  AFTER running  EVERY 1h \
      build == latest OR latest == skip OR players > 0   IF updates == 'auto'
 
-ACTION update FOR current WITHIN 10m
+ACTION update "Update Paper" FOR current WITHIN 10m
   WHEN "a newer Paper build for $version exists, and nobody plays"
   DO   "install the newest Paper $version build, keeping the running jar and its build id \
         as .previous, and restart the server"
 
-ACTION rollback FOR running, smooth WITHIN 5m IF SINCE(update) < 2h
+ACTION rollback "Go back to the previous build" FOR running, smooth WITHIN 5m IF SINCE(update) < 2h
   WHEN "the server fails since its update: it crashes on start, or logs errors the old build did not"
   RUN <<EOF
     cd /opt/minecraft
@@ -227,11 +230,11 @@ EOF
 FACT logs  FOLLOW tail -n 0 -F /opt/minecraft/logs/latest.log \
              | grep --line-buffered -E '/(WARN|ERROR)\]: '
 
-GOAL quiet  AFTER running  EVERY 15m \
+GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
      "the new lines in `logs` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without touching the worlds"

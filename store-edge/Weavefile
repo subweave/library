@@ -24,15 +24,15 @@ SECRET INFLUX_TOKEN "the token for the central InfluxDB"
 NEVER "delete files in /var/lib/telegraf/buffer"
 NEVER "add a Telegraf output other than the InfluxDB one at $url"
 NEVER "change the shop's network, router or tills"
-NEVER IF interval < 1s
+NEVER IF interval < 1s BECAUSE "the weave collects metrics at most once a second"
 
 # ── Install ────────────────────────────────────────────
 
 FACT telegraf  command -v telegraf
 
-GOAL installed  telegraf
+GOAL installed  "Telegraf is installed"  telegraf
 
-ACTION install FOR installed WITHIN 10m
+ACTION install "Install Telegraf" FOR installed WITHIN 10m
   WHEN "Telegraf is missing"
   RUN <<EOF
     curl -fsSL -o /tmp/influxdata-archive.key https://repos.influxdata.com/influxdata-archive.key
@@ -61,9 +61,9 @@ FACT valid <<EOF
     --config-directory /etc/telegraf/telegraf.d > /dev/null 2>&1
 EOF
 
-GOAL configured  AFTER installed  written AND valid
+GOAL configured  "Telegraf's settings match this shop and are valid"  AFTER installed  written AND valid
 
-ACTION configure FOR configured WITHIN 5m
+ACTION configure "Write the Telegraf settings" FOR configured WITHIN 5m
   WHEN "the Telegraf files differ from this shop's ARGs"
   ADD <<EOF /etc/telegraf/telegraf.conf
     [global_tags]
@@ -107,13 +107,16 @@ FACT uplink  curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url/ping"
 FACT buffer  du -sm /var/lib/telegraf/buffer | cut -f1
 FACT logs    FOLLOW journalctl -f -n 0 -u telegraf | grep --line-buffered -E ' [EW]! '
 
-GOAL running   AFTER configured             up
-GOAL draining  AFTER running     EVERY 15m  uplink != 204 OR buffer < 50 OR buffer < PREV(buffer)
+GOAL running   "Telegraf is running" \
+               AFTER configured             up
+GOAL draining  "metrics saved on disk reach the central server once it answers" \
+               AFTER running     EVERY 15m  uplink != 204 OR buffer < 50 OR buffer < PREV(buffer)
 # A second failure within a day goes to the person: a restart did not help.
-GOAL quiet     AFTER running     EVERY 30m  TRIES 1 PER 1d \
+GOAL quiet     "the logs show no trouble" \
+               AFTER running     EVERY 30m  TRIES 1 PER 1d \
      "the new lines in `logs` show nothing that needs action"
 
-ACTION restart FOR running, draining, quiet WITHIN 2m
+ACTION restart "Restart Telegraf" FOR running, draining, quiet WITHIN 2m
   WHEN "Telegraf stopped, its buffer stopped draining, or it logs errors it does not recover from"
   RUN  systemctl restart telegraf
 
@@ -122,9 +125,9 @@ ACTION restart FOR running, draining, quiet WITHIN 2m
 FACT disk     df --output=pcent /var/lib/telegraf | tail -1 | tr -dc 0-9
 FACT junk_mb  du -scm /var/log/journal /var/cache/apt/archives | tail -1 | cut -f1
 
-GOAL room  AFTER installed  EVERY 10m  disk < 90
+GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90
 
-ACTION trim FOR room WITHIN 5m IF junk_mb > 300
+ACTION trim "Delete old logs and package files" FOR room WITHIN 5m IF junk_mb > 300
   WHEN "the systemd journal or the apt cache, not Telegraf's buffer, fills the disk"
   RUN  journalctl --vacuum-size=200M
   RUN  apt-get clean
@@ -135,15 +138,17 @@ ACTION trim FOR room WITHIN 5m IF junk_mb > 300
 FACT ufw         ufw status | grep -qx 'Status: active'
 FACT unattended  systemctl is-active -q unattended-upgrades
 
-GOAL fenced   AFTER installed  EVERY 1h  ufw
-GOAL patched  AFTER installed  EVERY 1d  unattended
+GOAL fenced   "the firewall is on" \
+              AFTER installed  EVERY 1h  ufw
+GOAL patched  "Ubuntu installs security updates by itself" \
+              AFTER installed  EVERY 1d  unattended
 
-ACTION fence FOR fenced WITHIN 2m
+ACTION fence "Turn on the firewall" FOR fenced WITHIN 2m
   WHEN "the firewall is off"
   RUN  ufw default deny incoming && ufw default allow outgoing
   RUN  ufw allow 22/tcp && ufw --force enable
 
-ACTION patch FOR patched WITHIN 10m
+ACTION patch "Turn on security updates" FOR patched WITHIN 10m
   WHEN "Ubuntu's unattended security upgrades are off"
   RUN  apt-get install -y unattended-upgrades
   RUN  systemctl enable --now unattended-upgrades
@@ -155,9 +160,10 @@ FACT unreachable <<EOF
 EOF
 
 # The box cannot fix a till. One slower look, then the person is asked, with the facts.
-GOAL tills-up  AFTER running  EVERY 5m  TRIES 1 PER 1d  unreachable == 0  IF tills
+GOAL tills-up  "every till answers on the network" \
+               AFTER running  EVERY 5m  TRIES 1 PER 1d  unreachable == 0  IF tills
 
-ACTION recheck-tills FOR tills-up WITHIN 5m
+ACTION recheck-tills "Check the tills again" FOR tills-up WITHIN 5m
   WHEN "a till did not answer one ping"
   RUN <<EOF
     for a in ${tills//,/ }; do

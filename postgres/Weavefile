@@ -27,15 +27,15 @@ SECRET AWS_SECRET_ACCESS_KEY "the secret key for the backup bucket"   IF bucket
 
 # ── Rules ──────────────────────────────────────────────
 
-NEVER IF version < 14
-NEVER IF version < major
+NEVER IF version < 14 BECAUSE "the weave supports PostgreSQL 14 and newer only"
+NEVER IF version < major BECAUSE "PostgreSQL cannot move a cluster back to an older major release"
 NEVER "drop or truncate a database, or delete table rows"
 NEVER "let PostgreSQL accept connections from the internet"
 NEVER "turn off WAL archiving while a bucket is set"
 NEVER "delete files in pg_wal by hand"
-ASK   BEFORE restore
-ASK   BEFORE upgrade
-ASK   BEFORE patch IF updates == 'ask'
+ASK   BEFORE restore BECAUSE "a restore replaces the live data"
+ASK   BEFORE upgrade BECAUSE "a major upgrade moves all data to a new release"
+ASK   BEFORE patch IF updates == 'ask' BECAUSE "you chose to approve each minor release"
 ASK   "before dropping a PostgreSQL cluster that holds data or a replication slot, \
        or moving a data directory away"
 
@@ -43,9 +43,9 @@ ASK   "before dropping a PostgreSQL cluster that holds data or a replication slo
 
 FACT present "exits 0 when the PostgreSQL $version server and wal-g are both installed"
 
-GOAL installed  present
+GOAL installed  "PostgreSQL $version and the backup tool are installed"  present
 
-ACTION install FOR installed WITHIN 20m
+ACTION install "Install PostgreSQL" FOR installed WITHIN 20m
   WHEN "PostgreSQL $version or wal-g is missing"
   DO   "install PostgreSQL $version from the PGDG apt repository, and wal-g from its newest release"
 
@@ -70,15 +70,16 @@ FACT firewall  "ufw's status, active or inactive, then its rules for port 5432"
 FACT ssh_open  { ufw status 2>/dev/null || true; } \
                 | awk '/^Status: active/ {a = 1} /^(22(\/tcp)?|OpenSSH) +(ALLOW|LIMIT)/ {s = 1} END {exit a && !s}'
 
-GOAL configured  AFTER installed  EVERY 1h \
+GOAL configured  "PostgreSQL accepts connections only as you chose: $access" \
+                 AFTER installed  EVERY 1h \
      "`listen`, `hba` and `firewall` allow connections exactly as access '$access' asks, and no wider"
-GOAL reachable  ssh_open
+GOAL reachable  "the firewall lets SSH in"  ssh_open
 
-ACTION open-ssh FOR reachable WITHIN 2m
+ACTION open-ssh "Allow SSH in the firewall" FOR reachable WITHIN 2m
   WHEN "ufw is active and does not allow SSH"
   RUN  ufw allow 22/tcp
 
-ACTION configure FOR configured WITHIN 10m
+ACTION configure "Apply the PostgreSQL settings" FOR configured WITHIN 10m
   WHEN "a connection, TLS, memory or role setting differs from what the ARGs and this box's size ask"
   DO   "configure the $version/main cluster for access '$access', the role and database $database, \
         and this box's memory and CPUs. Restart only when a changed setting needs it."
@@ -121,9 +122,9 @@ EOF
 
 FACT up  runuser -u postgres -- pg_isready -q
 
-GOAL running  AFTER configured  up
+GOAL running  "PostgreSQL is running"  AFTER configured  up
 
-ACTION restart FOR running WITHIN 2m
+ACTION restart "Restart PostgreSQL" FOR running WITHIN 2m
   WHEN "postgres was killed, for example by the out-of-memory killer, \
         or crashed once, and nothing on disk is wrong"
   RUN  systemctl restart postgresql@$version-main
@@ -133,24 +134,27 @@ ACTION restart FOR running WITHIN 2m
 FACT archived "1 when WAL archiving is on and pg_stat_archiver shows an archived segment \
                newer than any failure, else 0"
 
-GOAL archiving  AFTER running    EVERY 5m   archived == 1          IF bucket
-GOAL backed     AFTER archiving             SINCE(backup) < 25h
-GOAL drilled    AFTER backed     EVERY 1d   SINCE(drill) < 30d
+GOAL archiving  "every change is copied to the backup bucket" \
+                AFTER running    EVERY 5m   archived == 1          IF bucket
+GOAL backed     "the newest full backup is less than 25 hours old" \
+                AFTER archiving             SINCE(backup) < 25h
+GOAL drilled    "a test restore passed in the last 30 days" \
+                AFTER backed     EVERY 1d   SINCE(drill) < 30d
 
-ACTION archive FOR archiving WITHIN 10m
+ACTION archive "Start copying changes to the bucket" FOR archiving WITHIN 10m
   WHEN "WAL archiving is off, or wal-g is not set up"
   DO   "turn on WAL archiving with wal-g to $bucket"
 
-ACTION backup FOR backed WITHIN 6h
+ACTION backup "Take a full backup" FOR backed WITHIN 6h
   WHEN "the newest base backup is older than a day"
   DO   "push a base backup with wal-g, then keep only the newest $keep"
 
-ACTION drill FOR drilled WITHIN 6h
+ACTION drill "Test a restore" FOR drilled WITHIN 6h
   WHEN "no restore drill passed in the last 30 days"
   DO   "restore the newest base backup and its WAL into a scratch directory, check that it \
         answers queries, then delete it"
 
-ACTION restore FOR running, quiet WITHIN 6h IF bucket
+ACTION restore "Restore the newest backup" FOR running, quiet WITHIN 6h IF bucket
   WHEN "postgres reports lost or corrupt data"
   DO   "restore the newest wal-g backup and replay the archived WAL"
 
@@ -227,9 +231,9 @@ FACT data_gb  "the size of the cluster's data directory without pg_wal, in GB, a
 FACT wal_gb   "the size of the cluster's pg_wal directory, in GB, a number"
 FACT logs_gb  "the size of /var/log/postgresql and the systemd journal together, in GB, a number"
 
-GOAL room  AFTER installed  EVERY 5m  disk < 85
+GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 5m  disk < 85
 
-ACTION free-disk FOR room WITHIN 10m IF logs_gb > 1
+ACTION free-disk "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1
   WHEN "old PostgreSQL logs or the systemd journal, not data or WAL, fill the disk"
   DO   "delete compressed PostgreSQL logs older than 7 days and shrink the systemd journal to 200 MB"
 
@@ -252,15 +256,18 @@ FACT max_conns  "the value of max_connections"
 FACT idle_tx    "seconds the longest session has been idle in a transaction, 0 when none is"
 FACT xid_age    "the highest age(datfrozenxid) of any database, a number"
 
-GOAL connections  AFTER running  EVERY 5m  conns < max_conns * 0.8
-GOAL short-tx     AFTER running  EVERY 5m  idle_tx < 600
-GOAL frozen       AFTER running  EVERY 1h  xid_age < 1000000000
+GOAL connections  "fewer than 80% of the allowed connections are in use" \
+                  AFTER running  EVERY 5m  conns < max_conns * 0.8
+GOAL short-tx     "no session keeps a transaction open and idle for 10 minutes" \
+                  AFTER running  EVERY 5m  idle_tx < 600
+GOAL frozen       "PostgreSQL is far from the limit where it stops accepting writes" \
+                  AFTER running  EVERY 1h  xid_age < 1000000000
 
-ACTION end-idle FOR short-tx, connections WITHIN 2m
+ACTION end-idle "End idle transactions" FOR short-tx, connections WITHIN 2m
   WHEN "a session has been idle in a transaction for over 10 minutes"
   DO   "end every session idle in a transaction for over 10 minutes"
 
-ACTION freeze FOR frozen WITHIN 12h
+ACTION freeze "Clean up old transaction IDs" FOR frozen WITHIN 12h
   WHEN "autovacuum fell behind on freezing, and nothing holds the oldest transaction ID back"
   DO   "freeze the tables of the database with the oldest datfrozenxid, oldest first"
 
@@ -281,14 +288,16 @@ EOF
 FACT minor  "1 when apt has a newer postgresql-$version package than the one installed, else 0"
 FACT major  "the major version of the running server, a number"
 
-GOAL patched  AFTER running  EVERY 1d  minor == 0
-GOAL current  AFTER running            major == version
+GOAL patched  "PostgreSQL has the newest minor release" \
+              AFTER running  EVERY 1d  minor == 0
+GOAL current  "PostgreSQL runs major release $version" \
+              AFTER running            major == version
 
-ACTION patch FOR patched WITHIN 15m
+ACTION patch "Install the minor release" FOR patched WITHIN 15m
   WHEN "a PostgreSQL minor release is pending; minor releases keep the data format"
   DO   "install the pending postgresql-$version minor release and restart the cluster"
 
-ACTION upgrade FOR current WITHIN 2h
+ACTION upgrade "Upgrade the major release" FOR current WITHIN 2h
   WHEN "the running major release is older than $version"
   DO   "upgrade the main cluster to PostgreSQL $version"
 
@@ -311,11 +320,11 @@ FACT logs    FOLLOW "new WARNING, ERROR, FATAL and PANIC lines of the PostgreSQL
 # ufw logs each packet it drops at warning level: scanners, not a fault.
 FACT kernel  FOLLOW journalctl -k -f -n 0 -p warning | grep --line-buffered -v 'UFW BLOCK'
 
-GOAL quiet  AFTER running  EVERY 10m \
+GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 10m \
      "the new lines in `logs` and `kernel` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without losing data"

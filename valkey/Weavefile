@@ -26,20 +26,22 @@ NEVER "flush or delete keys"
 NEVER "turn off the password"
 NEVER "open port 6379 to the internet"
 NEVER "change the dir or dbfilename settings at runtime"
-NEVER IF memory < 64
+NEVER IF memory < 64 BECAUSE "the weave needs at least 64 MB of memory for data"
 # A cold cache sends every read to the client's database.
-ASK   BEFORE restart IF role == 'cache' AND used > 1073741824
-ASK   BEFORE patch   IF role == 'cache' AND used > 1073741824 AND pending > 0
+ASK   BEFORE restart IF role == 'cache' AND used > 1073741824 \
+      BECAUSE "a restart empties the cache, and every read then goes to the app's database"
+ASK   BEFORE patch   IF role == 'cache' AND used > 1073741824 AND pending > 0 \
+      BECAUSE "an update restarts Valkey and empties the cache, so every read then goes to the app's database"
 # A store whose only copy is on this box.
-ASK   IF role == 'store' AND NOT copies
+ASK   IF role == 'store' AND NOT copies BECAUSE "the only copy of the data is on this box"
 
 # ── Install ────────────────────────────────────────────
 
 FACT valkey  "exits 0 when valkey-server and valkey-cli are installed"
 
-GOAL installed  valkey
+GOAL installed  "Valkey is installed"  valkey
 
-ACTION install FOR installed WITHIN 5m
+ACTION install "Install Valkey" FOR installed WITHIN 5m
   WHEN "valkey-server is missing"
   DO   "install valkey-server from Ubuntu's packages, and set vm.overcommit_memory = 1 for good"
 
@@ -61,9 +63,9 @@ EOF
 
 FACT up  valkey-cli ping | grep -qx PONG
 
-GOAL running  AFTER installed  up
+GOAL running  "Valkey answers"  AFTER installed  up
 
-ACTION restart FOR running WITHIN 5m
+ACTION restart "Restart Valkey" FOR running WITHIN 5m
   WHEN "valkey-server crashed or hangs"
   RUN  systemctl restart valkey-server
 
@@ -73,12 +75,12 @@ FACT max     valkey-cli config get maxmemory | tail -1
 FACT policy  valkey-cli config get maxmemory-policy | tail -1
 FACT aof     valkey-cli config get appendonly | tail -1
 
-GOAL sized  AFTER running \
+GOAL sized  "Valkey has $memory MB and the settings of a $role"  AFTER running \
      max == memory * 1048576 AND \
      ((role == 'cache' AND policy == 'allkeys-lru' AND aof == 'no') OR \
       (role == 'store' AND policy == 'noeviction'  AND aof == 'yes'))
 
-ACTION size FOR sized WITHIN 2m
+ACTION size "Apply the memory settings" FOR sized WITHIN 2m
   WHEN "memory, eviction or persistence differ from the role"
   DO   "set maxmemory to $memory MB and the eviction and persistence of role '$role', \
         then save them with CONFIG REWRITE"
@@ -107,10 +109,10 @@ EOF
 FACT local_only  "exits 0 when port 6379 listens on loopback addresses only"
 FACT auth_on     [ -n "$(valkey-cli config get requirepass | tail -1)" ]
 
-GOAL guarded  AFTER running \
+GOAL guarded  "connections are allowed only as you chose: $access"  AFTER running \
      (access == 'local' AND local_only) OR (access == 'private' AND auth_on)
 
-ACTION guard FOR guarded WITHIN 10m
+ACTION guard "Apply the access settings" FOR guarded WITHIN 10m
   WHEN "the password or the listening addresses differ from access '$access'"
   DO <<EOF
     Access is '$access'.
@@ -137,10 +139,12 @@ EOF
 FACT used      valkey-cli info memory | awk -F: '/^used_memory:/ {print $2}'
 FACT rejected  valkey-cli info stats | awk -F: '/^rejected_connections:/ {print $2}'
 
-GOAL room       AFTER running  EVERY 5m  used < max * 0.9           IF role == 'store'
-GOAL accepting  AFTER running  EVERY 5m  rejected == PREV(rejected)
+GOAL room       "the store is less than 90% full" \
+                AFTER running  EVERY 5m  used < max * 0.9           IF role == 'store'
+GOAL accepting  "Valkey turns away no new connections" \
+                AFTER running  EVERY 5m  rejected == PREV(rejected)
 
-ACTION raise-clients FOR accepting WITHIN 5m
+ACTION raise-clients "Allow more connections" FOR accepting WITHIN 5m
   WHEN "the server answers, but rejects new connections at maxclients while memory has room"
   DO   "raise maxclients by half, within the open-file limit of the valkey-server unit, \
         and save it with CONFIG REWRITE"
@@ -160,14 +164,16 @@ EOF
 
 FACT aof_ok  valkey-cli info persistence | grep -q '^aof_last_write_status:ok'
 
-GOAL persisted  AFTER running  EVERY 5m  aof_ok                     IF role == 'store'
-GOAL copied     AFTER running            SINCE(backup) < 25h        IF copies
+GOAL persisted  "the store saves its data to disk" \
+                AFTER running  EVERY 5m  aof_ok                     IF role == 'store'
+GOAL copied     "the newest copy of the data is less than 25 hours old" \
+                AFTER running            SINCE(backup) < 25h        IF copies
 
-ACTION rewrite-aof FOR persisted WITHIN 15m
+ACTION rewrite-aof "Rewrite the data file" FOR persisted WITHIN 15m
   WHEN "AOF writes failed, and disk space came back"
   RUN  valkey-cli bgrewriteaof
 
-ACTION backup FOR copied WITHIN 30m IF copies
+ACTION backup "Copy the data off the box" FOR copied WITHIN 30m IF copies
   WHEN "the last copy is older than a day"
   DO   "save an RDB snapshot with valkey-cli --rdb to /var/backups, copy it to $copies with scp, \
         and keep 3 days of snapshots on the box"
@@ -191,9 +197,10 @@ EOF
 FACT unattended  grep -q valkey /etc/apt/apt.conf.d/51subweave-valkey && systemctl is-active -q unattended-upgrades
 FACT pending     apt-get -s upgrade | grep -c '^Inst valkey' || true
 
-GOAL patched  AFTER running  EVERY 1d  unattended AND pending == 0
+GOAL patched  "security updates install by themselves, and no Valkey update waits" \
+              AFTER running  EVERY 1d  unattended AND pending == 0
 
-ACTION patch FOR patched WITHIN 15m
+ACTION patch "Install the updates" FOR patched WITHIN 15m
   WHEN "unattended security upgrades are off, or an Ubuntu update of valkey is pending"
   ADD <<EOF /etc/apt/apt.conf.d/51subweave-valkey
     Unattended-Upgrade::Package-Blacklist { "valkey"; };
@@ -205,11 +212,11 @@ ACTION patch FOR patched WITHIN 15m
 
 FACT logs  FOLLOW "new warning lines of /var/log/valkey/valkey-server.log, the ones marked ' # '"
 
-GOAL quiet  AFTER running  EVERY 15m \
+GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
      "the new lines in `logs` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting keys"

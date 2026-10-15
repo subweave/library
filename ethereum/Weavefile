@@ -47,24 +47,24 @@ NEVER "run ufw allow for port 8545 or 8546 without a from address"
 NEVER "docker kill, docker rm -f or docker restart the reth container"
 NEVER "stop, kill or renice processes other than reth and Lighthouse"
 NEVER "delete files under $reth_data or $lighthouse_data by hand"
-NEVER IF reth_container AND NOT lighthouse_container
-NEVER IF lighthouse_container AND NOT reth_container
+NEVER IF reth_container AND NOT lighthouse_container BECAUSE "the weave adopts reth and Lighthouse only together"
+NEVER IF lighthouse_container AND NOT reth_container BECAUSE "the weave adopts reth and Lighthouse only together"
 ASK   "before stopping for longer than a restart, removing or recreating a reth or Lighthouse container"
 ASK   "before an upgrade that needs a database migration, a resync or config changes"
-ASK   BEFORE resync
-ASK   BEFORE update IF updates == 'ask'
+ASK   BEFORE resync BECAUSE "a resync deletes all chain data and takes a day or more"
+ASK   BEFORE update IF updates == 'ask' BECAUSE "you chose to approve each client update"
 # Adopted clients run on a host with an owner: every change waits for the person,
 # until the person answers `always` for that action.
-ASK   BEFORE start IF reth_container
-ASK   BEFORE restart-reth IF reth_container
-ASK   BEFORE restart-lighthouse IF reth_container
-ASK   BEFORE seal IF reth_container
-ASK   BEFORE fence IF reth_container
-ASK   BEFORE free-logs IF reth_container
-ASK   BEFORE sync-clock IF reth_container
-ASK   BEFORE fix IF reth_container
+ASK   BEFORE start IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE restart-reth IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE restart-lighthouse IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE seal IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE fence IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE free-logs IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE sync-clock IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE fix IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
 # reth keeps at least 10064 blocks of state history; fewer is not possible
-ASK   IF blocks < 10064
+ASK   IF blocks < 10064 BECAUSE "reth keeps at least 10064 blocks of history, more than you asked for"
 
 # ── Install ────────────────────────────────────────────
 
@@ -73,9 +73,9 @@ FACT present <<EOF
   else command -v reth && command -v lighthouse; fi
 EOF
 
-GOAL installed  present
+GOAL installed  "reth and Lighthouse are installed"  present
 
-ACTION install FOR installed WITHIN 30m IF NOT reth_container
+ACTION install "Install reth and Lighthouse" FOR installed WITHIN 30m IF NOT reth_container
   WHEN "reth or Lighthouse is missing"
   DO <<EOF
     Install the latest reth and Lighthouse releases from GitHub, after checking their signatures.
@@ -123,9 +123,9 @@ FACT exits <<EOF
   fi
 EOF
 
-GOAL running  AFTER installed  el_up AND cl_up
+GOAL running  "reth and Lighthouse are running"  AFTER installed  el_up AND cl_up
 
-ACTION start FOR running WITHIN 15m
+ACTION start "Start the stopped clients" FOR running WITHIN 15m
   WHEN "a client stopped or exited, and its last log lines show no full disk and no database error"
   RUN <<EOF
     if [ -n "$reth_container" ]; then
@@ -158,17 +158,19 @@ FACT load_per_cpu  awk -v n="$(nproc)" '{printf "%.2f\n", $1 / n}' /proc/loadavg
 
 # Lighthouse answers 206 while it syncs; reth's eth_syncing says false even when no
 # consensus client drives it any more, so the head's age is the real signal.
-GOAL synced  AFTER running  EVERY 2m  cl_health == 200 AND cl_behind < 64
-GOAL at-tip  AFTER synced   EVERY 1m  head_age < lag
+GOAL synced  "Lighthouse has caught up with the chain" \
+             AFTER running  EVERY 2m  cl_health == 200 AND cl_behind < 64
+GOAL at-tip  "the newest block on the node is less than $lag seconds old" \
+             AFTER synced   EVERY 1m  head_age < lag
 
-ACTION restart-lighthouse FOR synced, at-tip, quiet WITHIN 10m
+ACTION restart-lighthouse "Restart Lighthouse" FOR synced, at-tip, quiet WITHIN 10m
   WHEN "Lighthouse runs but stopped following the chain: a lost engine connection, few peers \
         or a stall in its log, while the host is not overloaded"
   RUN <<EOF
     if [ -n "$lighthouse_container" ]; then docker restart -t 120 "$lighthouse_container"; else systemctl restart lighthouse; fi
   EOF
 
-ACTION restart-reth FOR at-tip, quiet WITHIN 20m
+ACTION restart-reth "Restart reth" FOR at-tip, quiet WITHIN 20m
   WHEN "reth runs but its head stopped while Lighthouse is synced and sends it blocks, \
         and the host is not overloaded"
   RUN <<EOF
@@ -224,9 +226,10 @@ FACT el_peers <<EOF
 EOF
 FACT cl_peers  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/peer_count | grep -o '"connected":"[0-9]*"' | tr -dc 0-9
 
-GOAL peered  AFTER running  EVERY 5m  el_peers >= 5 AND cl_peers >= 10
+GOAL peered  "both clients connect to enough other nodes" \
+             AFTER running  EVERY 5m  el_peers >= 5 AND cl_peers >= 10
 
-ACTION add-peers FOR peered WITHIN 30m IF NOT reth_container
+ACTION add-peers "Open the ports for other nodes" FOR peered WITHIN 30m IF NOT reth_container
   WHEN "few peers while the p2p ports 30303 and 9000 are closed in the box's firewall"
   DO   "open the p2p ports in ufw, 30303 for reth and 9000 and 9001 for Lighthouse, then restart both clients"
 
@@ -276,15 +279,17 @@ FACT rpc_reach <<EOF
   echo "$reach"
 EOF
 
-GOAL sealed  AFTER running             engine_open == 0
-GOAL fenced  AFTER running  EVERY 1h   rpc_reach == 'local' OR rpc == 'open' \
+GOAL sealed  "only this box can reach the engine API that controls reth" \
+             AFTER running             engine_open == 0
+GOAL fenced  "apps reach JSON-RPC only as widely as you chose: $rpc" \
+             AFTER running  EVERY 1h   rpc_reach == 'local' OR rpc == 'open' \
                                         OR (rpc == 'private' AND rpc_reach == 'private')
 
-ACTION seal FOR sealed WITHIN 10m
+ACTION seal "Make the engine API local only" FOR sealed WITHIN 10m
   WHEN "port 8551 is open beyond localhost"
   DO   "make reth's engine API listen on 127.0.0.1:8551 only, then restart reth"
 
-ACTION fence FOR fenced WITHIN 10m
+ACTION fence "Limit who reaches JSON-RPC" FOR fenced WITHIN 10m
   WHEN "JSON-RPC listens on, or the firewall lets in, more than rpc '$rpc' asks"
   DO   "make reth's JSON-RPC on port 8545 reachable exactly as rpc '$rpc' asks, then restart reth"
 
@@ -315,9 +320,10 @@ FACT logs_gb <<EOF
   } | awk '{s += $1} END {printf "%.1f\n", s / 1e9}'
 EOF
 
-GOAL room  AFTER installed  EVERY 5m  el_disk < 85 AND cl_disk < 85 AND log_disk < 90
+GOAL room  "the disks for chain data and logs have room left" \
+           AFTER installed  EVERY 5m  el_disk < 85 AND cl_disk < 85 AND log_disk < 90
 
-ACTION free-logs FOR room WITHIN 10m IF logs_gb > 2
+ACTION free-logs "Shrink the logs" FOR room WITHIN 10m IF logs_gb > 2
   WHEN "logs, not chain data, fill a disk: the systemd journal or a client container's log file"
   RUN  journalctl --vacuum-size=500M
   RUN <<EOF
@@ -343,9 +349,9 @@ EOF
 
 FACT ntp  test "$(timedatectl show -p NTPSynchronized --value)" = yes
 
-GOAL clock  AFTER installed  EVERY 1h  ntp
+GOAL clock  "the clock keeps the right time from the internet"  AFTER installed  EVERY 1h  ntp
 
-ACTION sync-clock FOR clock WITHIN 15m
+ACTION sync-clock "Turn on clock sync" FOR clock WITHIN 15m
   WHEN "the system clock is not synchronized with NTP"
   RUN  timedatectl set-ntp true
 
@@ -376,14 +382,15 @@ EOF
 
 # With adopted containers the update is the owner's: no action fits, so a newer release
 # goes to the person, once a week at most.
-GOAL current  AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'
+GOAL current  "reth and Lighthouse run their newest releases" \
+              AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'
 
-ACTION update FOR current WITHIN 1h IF NOT reth_container
+ACTION update "Update reth and Lighthouse" FOR current WITHIN 1h IF NOT reth_container
   WHEN "the newest release is routine or a security fix"
   DO   "upgrade each client that has a newer release; copy its old binary \
         to /opt/eth/previous first; restart it"
 
-ACTION rollback FOR running, synced, at-tip WITHIN 15m IF SINCE(update) < 2h
+ACTION rollback "Go back to the previous releases" FOR running, synced, at-tip WITHIN 15m IF SINCE(update) < 2h
   WHEN "a client fails since its update: it crashes on start, or logs errors the old release did not"
   RUN  install -m 755 /opt/eth/previous/* /usr/local/bin/
   RUN  systemctl restart reth lighthouse
@@ -401,7 +408,7 @@ EOF
 
 # ── Resync ─────────────────────────────────────────────
 
-ACTION resync FOR synced, at-tip WITHIN 2d IF NOT reth_container
+ACTION resync "Delete chain data and sync again" FOR synced, at-tip WITHIN 2d IF NOT reth_container
   WHEN "the database is corrupt and a restart did not fix it"
   RUN  systemctl stop reth lighthouse
   RUN  rm -rf "$reth_data" "$lighthouse_data/beacon"
@@ -454,12 +461,12 @@ FACT logs FOLLOW <<EOF
   fi | grep --line-buffered -E 'WARN|ERRO|CRIT'
 EOF
 
-GOAL quiet  AFTER running  EVERY 15m \
+GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
      "the new lines in `logs` show nothing that needs action; peer churn and a rare reorg are normal"
 
 # ── Anything else ──────────────────────────────────────
 
 # Every goal but `current`: an update is never a generic fix.
-ACTION fix FOR installed, running, synced, at-tip, peered, sealed, fenced, room, clock, quiet WITHIN 30m
+ACTION fix "Fix the failing goal" FOR installed, running, synced, at-tip, peered, sealed, fenced, room, clock, quiet WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting chain data"

@@ -23,8 +23,8 @@ SECRET HF_TOKEN     "a Hugging Face token that may download $model"  IF gated ==
 
 NEVER "serve a model other than $model"
 NEVER "open port 8000 to the internet"
-ASK   BEFORE reboot
-ASK   BEFORE install-driver
+ASK   BEFORE reboot BECAUSE "a reboot stops the whole box and the model with it"
+ASK   BEFORE install-driver BECAUSE "a new GPU driver needs a reboot"
 ASK   "before changing the NVIDIA driver or CUDA version"
 ASK   "before a vLLM upgrade"
 
@@ -34,16 +34,17 @@ FACT gpu        nvidia-smi -L
 FACT xid        "the number of kernel log lines with 'NVRM: Xid' in the last 10 minutes, a number"
 FACT xid_lines  "the last 5 kernel log lines with 'NVRM: Xid' in the last 10 minutes"
 
-GOAL driver                              gpu
-GOAL gpu-healthy  AFTER driver  EVERY 5m xid == 0
+GOAL driver       "the NVIDIA driver sees the GPU"  gpu
+GOAL gpu-healthy  "the GPU reported no errors in the last 10 minutes" \
+                  AFTER driver  EVERY 5m xid == 0
 
-ACTION install-driver FOR driver WITHIN 20m
+ACTION install-driver "Install the NVIDIA driver" FOR driver WITHIN 20m
   WHEN "the box has a GPU and no NVIDIA driver"
   DO   "install the NVIDIA server driver for compute with ubuntu-drivers, and the matching \
         nvidia-utils server package for nvidia-smi"
   RUN  systemctl reboot
 
-ACTION reboot FOR gpu-healthy, running WITHIN 15m
+ACTION reboot "Reboot the box" FOR gpu-healthy, running WITHIN 15m
   WHEN "an NVIDIA Xid error left the GPU unusable"
   RUN  systemctl reboot
 
@@ -79,9 +80,9 @@ EOF
 
 FACT vllm  /opt/vllm/bin/vllm --version
 
-GOAL installed  AFTER driver  vllm
+GOAL installed  "vLLM is installed"  AFTER driver  vllm
 
-ACTION install FOR installed WITHIN 1h
+ACTION install "Install vLLM" FOR installed WITHIN 1h
   WHEN "vLLM is missing"
   DO <<EOF
     Install the latest vLLM release with uv into /opt/vllm.
@@ -107,14 +108,14 @@ FACT up      curl -sf localhost:8000/health
 FACT served  "the id of the first model that localhost:8000/v1/models lists, \
               sending VLLM_API_KEY as a bearer token when it is set"
 
-GOAL running  AFTER installed  up
-GOAL serving  AFTER running    served == model
+GOAL running  "vLLM answers"       AFTER installed  up
+GOAL serving  "vLLM serves $model"  AFTER running    served == model
 
-ACTION restart FOR running, gpu-healthy, quiet WITHIN 15m
+ACTION restart "Restart vLLM" FOR running, gpu-healthy, quiet WITHIN 15m
   WHEN "the engine hung or crashed, or an application Xid error (13, 31, 43) hit a healthy GPU"
   RUN  systemctl restart vllm
 
-ACTION serve FOR serving WITHIN 1h
+ACTION serve "Switch to the requested model" FOR serving WITHIN 1h
   WHEN "the server runs, but serves a model other than $model"
   DO   "change the model in the vllm unit to $model, keeping the other flags \
         that still fit it, and restart vllm"
@@ -140,9 +141,10 @@ FACT waiting    "the sum of vllm:num_requests_waiting in localhost:8000/metrics,
 FACT kv         "vllm:kv_cache_usage_perc in localhost:8000/metrics, times 100, as a whole number"
 FACT preempted  "the sum of vllm:num_preemptions_total in localhost:8000/metrics, a number"
 
-GOAL keeping-up  AFTER running  EVERY 5m  waiting < 20 AND preempted - PREV(preempted) < 50
+GOAL keeping-up  "vLLM keeps up with its requests" \
+                 AFTER running  EVERY 5m  waiting < 20 AND preempted - PREV(preempted) < 50
 
-ACTION lower-concurrency FOR keeping-up WITHIN 15m
+ACTION lower-concurrency "Serve fewer requests at once" FOR keeping-up WITHIN 15m
   WHEN "the engine answers, but preempts requests for long or fills its KV cache"
   DO   "lower --max-num-seqs in the vllm unit by a quarter, restart vllm, and say the new value"
 
@@ -165,9 +167,9 @@ EOF
 FACT disk       "percent used of the filesystem that holds /root/.cache, a number"
 FACT others_gb  "the size in GB of the model directories in /root/.cache/huggingface/hub other than $model's, a number"
 
-GOAL room  AFTER installed  EVERY 10m  disk < 90
+GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90
 
-ACTION free-disk FOR room WITHIN 15m IF others_gb > 1
+ACTION free-disk "Delete the other models" FOR room WITHIN 15m IF others_gb > 1
   WHEN "models other than $model, not $model itself, fill the disk"
   DO   "free space in /root/.cache/huggingface by removing models other than $model"
 
@@ -188,9 +190,9 @@ FACT unattended <<EOF
   grep -q nvidia /etc/apt/apt.conf.d/51subweave-gpu && systemctl is-active -q unattended-upgrades
 EOF
 
-GOAL patched  AFTER installed  EVERY 1d  unattended
+GOAL patched  "Ubuntu installs security updates by itself"  AFTER installed  EVERY 1d  unattended
 
-ACTION patch FOR patched WITHIN 10m
+ACTION patch "Turn on security updates" FOR patched WITHIN 10m
   WHEN "Ubuntu's unattended security upgrades are off"
   ADD <<EOF /etc/apt/apt.conf.d/51subweave-gpu
     Unattended-Upgrade::Package-Blacklist { "nvidia-"; "libnvidia-"; "cuda-"; };
@@ -201,12 +203,12 @@ ACTION patch FOR patched WITHIN 10m
 
 FACT logs  FOLLOW "new WARNING, ERROR and Traceback lines of the vllm service's journal"
 
-GOAL quiet  AFTER running  EVERY 10m \
+GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 10m \
      "the new lines in `logs` and `xid_lines` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting the files of $model, changing the driver, \
         or stopping vllm for longer than a restart"
