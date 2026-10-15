@@ -14,7 +14,7 @@ subweave run ethereum "mainnet; reth container reth, lighthouse container lighth
 | `reth_data`, `lighthouse_data` | MAY | `/var/lib/eth/reth`, `/var/lib/eth/lighthouse` | the host directories of the two databases |
 | `history` | SHOULD | `full` | `archive`, `full`, `minimal`, or `last <blocks> blocks`; reth keeps at least 10064 |
 | `rpc` | SHOULD | `local` | JSON-RPC on `local`host only, the `private` network, or `open` behind a firewall outside the box |
-| `updates` | MAY | `auto` | `auto` installs new releases; `ask` asks before each update |
+| `updates` | MAY | `auto` | `auto` installs new releases; `ask` asks before each update; `off` for clients built or pinned elsewhere: no release tracking |
 | `lag` | MAY | `60` | seconds the newest block may trail the clock |
 
 ## Two ways to run
@@ -34,7 +34,7 @@ installed
 ├─ running
 │  ├─ synced
 │  │  ├─ at-tip
-│  │  └─ current
+│  │  └─ current   IF updates != 'off'
 │  ├─ peered
 │  ├─ sealed
 │  ├─ fenced

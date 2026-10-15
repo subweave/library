@@ -36,6 +36,7 @@ ARG rpc=local     SHOULD
 ARG updates=auto  MAY
     auto                  "install routine and security releases of reth and Lighthouse as they come"
     ask                   "ask the person before each client update"
+    off                   "the clients are built or pinned elsewhere: do not track releases"
 ARG lag=60        MAY     "how many seconds the newest block may trail the clock, a number like 60; \
                            a slot is 12 seconds"
 
@@ -381,9 +382,9 @@ FACT releases <<EOF
 EOF
 
 # With adopted containers the update is the owner's: no action fits, so a newer release
-# goes to the person, once a week at most.
+# goes to the person; `no` leaves it until the next daily check.
 GOAL current  "reth and Lighthouse run their newest releases" \
-              AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'
+              AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'  IF updates != 'off'
 
 ACTION update "Update reth and Lighthouse" FOR current WITHIN 1h IF NOT reth_container
   WHEN "the newest release is routine or a security fix"
