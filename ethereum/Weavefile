@@ -260,7 +260,9 @@ EOF
 
 GOAL sealed  AFTER running             engine_open == 0
 GOAL fenced  AFTER running  EVERY 1h \
-     "`rpc_listen` and `firewall` let JSON-RPC be reached as rpc '$rpc' says, and no wider"
+     "JSON-RPC on ports 8545 and 8546 is reachable as rpc '$rpc' says, and no wider. A port is \
+      reachable from outside when `rpc_listen` shows an address other than 127.0.0.1 or [::1] \
+      and `firewall` is inactive or has a rule that allows it"
 
 ACTION seal FOR sealed WITHIN 10m
   WHEN "port 8551 is open beyond localhost"
@@ -334,7 +336,7 @@ ACTION sync-clock FOR clock WITHIN 15m
 # ── Updates ────────────────────────────────────────────
 
 # The running versions come from the clients themselves, so adopted containers count too.
-FACT outdated <<EOF
+FACT behind <<EOF
   el=$(curl -sf -m3 -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:8545 \
     | grep -o 'reth/v[0-9][0-9.]*' | cut -d/ -f2)
@@ -343,8 +345,11 @@ FACT outdated <<EOF
   el_new=$(tag paradigmxyz/reth)
   cl_new=$(tag sigp/lighthouse)
   [ -n "$el" ] && [ -n "$cl" ] && [ -n "$el_new" ] && [ -n "$cl_new" ]
-  behind() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$1" ] && echo 1 || echo 0; }
-  echo $(( $(behind "$el" "$el_new") + $(behind "$cl" "$cl_new") ))
+  older() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$1" ]; }
+  out=()
+  older "$el" "$el_new" && out+=("reth $el, newest $el_new")
+  older "$cl" "$cl_new" && out+=("Lighthouse $cl, newest $cl_new")
+  if [ ${#out[@]} -eq 0 ]; then echo none; else (IFS=';'; echo "${out[*]}" | sed 's/;/; /g'); fi
 EOF
 FACT releases <<EOF
   for r in paradigmxyz/reth sigp/lighthouse; do
@@ -353,8 +358,9 @@ FACT releases <<EOF
   done
 EOF
 
-# With adopted containers the update is the owner's: a newer release goes to the person.
-GOAL current  AFTER synced  EVERY 1d  TRIES 1 PER 7d  outdated == 0
+# With adopted containers the update is the owner's: no action fits, so a newer release
+# goes to the person, once a week at most.
+GOAL current  AFTER synced  EVERY 1d  TRIES 1 PER 7d  behind == 'none'
 
 ACTION update FOR current WITHIN 1h IF NOT reth_container
   WHEN "the newest release is routine or a security fix"
@@ -437,6 +443,7 @@ GOAL quiet  AFTER running  EVERY 15m \
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix WITHIN 30m
+# Every goal but `current`: an update is never a generic fix.
+ACTION fix FOR installed, running, synced, at-tip, peered, sealed, fenced, room, clock, quiet WITHIN 30m
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting chain data"
