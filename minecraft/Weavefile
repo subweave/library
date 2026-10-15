@@ -35,8 +35,8 @@ ASK   "before installing Paper for a Minecraft version other than $version: a wo
 
 # ── Install ────────────────────────────────────────────
 
-FACT java   "exits 0 when java runs and its major release is 25 or newer"
-FACT paper  test -f /opt/minecraft/paper.jar
+FACT java   BOOL "exits 0 when java runs and its major release is 25 or newer"
+FACT paper  BOOL test -f /opt/minecraft/paper.jar
 
 GOAL runtime    "Java 25 or newer is installed"  java
 GOAL installed  "Paper is installed"  AFTER runtime  paper
@@ -86,10 +86,10 @@ EOF
 
 # ── Running ────────────────────────────────────────────
 
-FACT up       systemctl is-active -q minecraft
-FACT rcon     mcrcon -c list > /dev/null
-FACT players  "the number of players online, from mcrcon -c list"
-FACT tps      "the 1-minute ticks per second that mcrcon -c tps prints first, a number"
+FACT up       BOOL    systemctl is-active -q minecraft
+FACT rcon     BOOL    mcrcon -c list > /dev/null
+FACT players  NUMBER  "the number of players online, from mcrcon -c list"
+FACT tps      NUMBER  "the 1-minute ticks per second that mcrcon -c tps prints first"
 
 GOAL running  "the server runs and answers commands" \
               AFTER installed             up AND rcon
@@ -172,21 +172,21 @@ EOF
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT disk     "percent used of the filesystem that holds /opt/minecraft, a number"
-FACT logs_gb  "the size of /opt/minecraft/logs and the systemd journal together, in GB, a number"
+FACT disk     NUMBER %   "percent used of the filesystem that holds /opt/minecraft"
+FACT logs_gb  NUMBER GB  "the size of /opt/minecraft/logs and the systemd journal together"
 
-GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 10m  disk < 85
+GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 10m  disk < 85%
 
-ACTION trim "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1
+ACTION trim "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1GB
   WHEN "old server logs or the systemd journal, not worlds or backups, fill the disk"
   DO   "delete compressed server logs in /opt/minecraft/logs older than 14 days \
         and shrink the systemd journal to 200 MB"
 
 # ── Paper updates ──────────────────────────────────────
 
-FACT build   cat /opt/minecraft/build
-FACT skip    cat /opt/minecraft/skip-build
-FACT latest  curl -s https://fill.papermc.io/v3/projects/paper/versions/$version/builds/latest \
+FACT build   TEXT  cat /opt/minecraft/build
+FACT skip    TEXT  cat /opt/minecraft/skip-build
+FACT latest  TEXT  curl -s https://fill.papermc.io/v3/projects/paper/versions/$version/builds/latest \
                | jq -r .id
 
 GOAL current  "the server runs the newest Paper build"  AFTER running  EVERY 1h \
@@ -227,11 +227,11 @@ EOF
 # ── Logs ───────────────────────────────────────────────
 
 # WARN and ERROR lines only: never chat, which players write.
-FACT logs  FOLLOW tail -n 0 -F /opt/minecraft/logs/latest.log \
+FACT logs  LINES  tail -n 0 -F /opt/minecraft/logs/latest.log \
              | grep --line-buffered -E '/(WARN|ERROR)\]: '
 
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
-     "the new lines in `logs` show nothing that needs action"
+     "the lines in `logs` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 

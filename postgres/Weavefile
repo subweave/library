@@ -41,7 +41,7 @@ ASK   "before dropping a PostgreSQL cluster that holds data or a replication slo
 
 # ── Install ────────────────────────────────────────────
 
-FACT present "exits 0 when the PostgreSQL $version server and wal-g are both installed"
+FACT present BOOL "exits 0 when the PostgreSQL $version server and wal-g are both installed"
 
 GOAL installed  "PostgreSQL $version and the backup tool are installed"  present
 
@@ -63,11 +63,11 @@ EOF
 
 # ── Connections and settings ───────────────────────────
 
-FACT listen    "the value of listen_addresses"
-FACT hba       "the lines of the cluster's pg_hba.conf that are not comments or blank"
-FACT firewall  "ufw's status, active or inactive, then its rules for port 5432"
+FACT listen    TEXT "the value of listen_addresses"
+FACT hba       TEXT "the lines of the cluster's pg_hba.conf that are not comments or blank"
+FACT firewall  TEXT "ufw's status, active or inactive, then its rules for port 5432"
 # Exits 0 when ufw is off or allows SSH, so the daemon opens SSH again after a lockout.
-FACT ssh_open  { ufw status 2>/dev/null || true; } \
+FACT ssh_open  BOOL { ufw status 2>/dev/null || true; } \
                 | awk '/^Status: active/ {a = 1} /^(22(\/tcp)?|OpenSSH) +(ALLOW|LIMIT)/ {s = 1} END {exit a && !s}'
 
 GOAL configured  "PostgreSQL accepts connections only as you chose: $access" \
@@ -120,7 +120,7 @@ EOF
 
 # ── Running ────────────────────────────────────────────
 
-FACT up  runuser -u postgres -- pg_isready -q
+FACT up  BOOL runuser -u postgres -- pg_isready -q
 
 GOAL running  "PostgreSQL is running"  AFTER configured  up
 
@@ -131,11 +131,11 @@ ACTION restart "Restart PostgreSQL" FOR running WITHIN 2m
 
 # ── Backups and recovery ───────────────────────────────
 
-FACT archived "1 when WAL archiving is on and pg_stat_archiver shows an archived segment \
-               newer than any failure, else 0"
+FACT archived BOOL "exits 0 when WAL archiving is on and pg_stat_archiver shows an archived segment \
+                    newer than any failure"
 
 GOAL archiving  "every change is copied to the backup bucket" \
-                AFTER running    EVERY 5m   archived == 1          IF bucket
+                AFTER running    EVERY 5m   archived               IF bucket
 GOAL backed     "the newest full backup is less than 25 hours old" \
                 AFTER archiving             SINCE(backup) < 25h
 GOAL drilled    "a test restore passed in the last 30 days" \
@@ -226,14 +226,14 @@ EOF
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT disk     "percent used of the filesystem that holds /var/lib/postgresql, a number"
-FACT data_gb  "the size of the cluster's data directory without pg_wal, in GB, a number"
-FACT wal_gb   "the size of the cluster's pg_wal directory, in GB, a number"
-FACT logs_gb  "the size of /var/log/postgresql and the systemd journal together, in GB, a number"
+FACT disk     NUMBER %   "percent used of the filesystem that holds /var/lib/postgresql"
+FACT data_gb  NUMBER GB  "the size of the cluster's data directory without pg_wal"
+FACT wal_gb   NUMBER GB  "the size of the cluster's pg_wal directory"
+FACT logs_gb  NUMBER GB  "the size of /var/log/postgresql and the systemd journal together"
 
-GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 5m  disk < 85
+GOAL room  "the disk is less than 85% full"  AFTER installed  EVERY 5m  disk < 85%
 
-ACTION free-disk "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1
+ACTION free-disk "Delete old logs" FOR room WITHIN 10m IF logs_gb > 1GB
   WHEN "old PostgreSQL logs or the systemd journal, not data or WAL, fill the disk"
   DO   "delete compressed PostgreSQL logs older than 7 days and shrink the systemd journal to 200 MB"
 
@@ -251,15 +251,15 @@ EOF
 
 # ── Load ───────────────────────────────────────────────
 
-FACT conns      "the number of client connections now"
-FACT max_conns  "the value of max_connections"
-FACT idle_tx    "seconds the longest session has been idle in a transaction, 0 when none is"
-FACT xid_age    "the highest age(datfrozenxid) of any database, a number"
+FACT conns      NUMBER    "the number of client connections now"
+FACT max_conns  NUMBER    "the value of max_connections"
+FACT idle_tx    NUMBER s  "how long the longest session has been idle in a transaction, 0 when none is"
+FACT xid_age    NUMBER    "the highest age(datfrozenxid) of any database"
 
 GOAL connections  "fewer than 80% of the allowed connections are in use" \
                   AFTER running  EVERY 5m  conns < max_conns * 0.8
 GOAL short-tx     "no session keeps a transaction open and idle for 10 minutes" \
-                  AFTER running  EVERY 5m  idle_tx < 600
+                  AFTER running  EVERY 5m  idle_tx < 10m
 GOAL frozen       "PostgreSQL is far from the limit where it stops accepting writes" \
                   AFTER running  EVERY 1h  xid_age < 1000000000
 
@@ -285,11 +285,11 @@ EOF
 
 # ── Updates ────────────────────────────────────────────
 
-FACT minor  "1 when apt has a newer postgresql-$version package than the one installed, else 0"
-FACT major  "the major version of the running server, a number"
+FACT minor  BOOL     "exits 0 when apt has a newer postgresql-$version package than the one installed"
+FACT major  VERSION  "the major release of the running server, like 18"
 
 GOAL patched  "PostgreSQL has the newest minor release" \
-              AFTER running  EVERY 1d  minor == 0
+              AFTER running  EVERY 1d  NOT minor
 GOAL current  "PostgreSQL runs major release $version" \
               AFTER running            major == version
 
@@ -316,12 +316,12 @@ EOF
 
 # ── Logs ───────────────────────────────────────────────
 
-FACT logs    FOLLOW "new WARNING, ERROR, FATAL and PANIC lines of the PostgreSQL log"
+FACT logs    LINES "new WARNING, ERROR, FATAL and PANIC lines of the PostgreSQL log"
 # ufw logs each packet it drops at warning level: scanners, not a fault.
-FACT kernel  FOLLOW journalctl -k -f -n 0 -p warning | grep --line-buffered -v 'UFW BLOCK'
+FACT kernel  LINES journalctl -k -f -n 0 -p warning | grep --line-buffered -v 'UFW BLOCK'
 
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 10m \
-     "the new lines in `logs` and `kernel` show nothing that needs action"
+     "the lines in `logs` and `kernel` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 

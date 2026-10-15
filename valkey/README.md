@@ -35,7 +35,7 @@ Most facts are `valkey-cli` commands: Valkey reports its state in numbers, and t
 1. **The request says "a Valkey for acme-shop".** `role` is MUST: a cache and a store differ in persistence and eviction, so `plan` shows an error and nothing runs.
 2. **A store with no copies.** `ASK IF role == 'store' AND NOT copies` asks at `run`, before anything is installed.
 3. **A client app leaks connections.** `rejected_connections` grows and `accepting` fails. The decider picks between `raise-clients` and `restart`; the `valkey-clients` skill tells the coder to name the leaking address.
-4. **The decider picks `restart` for a 1.8 GB cache.** `ASK BEFORE restart IF role == 'cache' AND used > 1073741824` asks first, on the agency's channel: a cold cache sends every read to the client's database.
+4. **The decider picks `restart` for a 1.8 GB cache.** `ASK BEFORE restart IF role == 'cache' AND used > 1GB` asks first, on the agency's channel: a cold cache sends every read to the client's database.
 5. **Someone runs `CONFIG SET maxmemory-policy noeviction` on a cache by hand.** `sized` fails within a minute. `size` runs the commands this box learned when it first passed, in code, with no coder call ([LIMITS §7](https://github.com/subweave/subweave/blob/main/LIMITS.md#7-learned-commands)). On Monday, `subweave inbox` lists the open asks from all 40 boxes in one place.
 
 ## Limits

@@ -28,16 +28,16 @@ NEVER "open port 6379 to the internet"
 NEVER "change the dir or dbfilename settings at runtime"
 NEVER IF memory < 64 BECAUSE "the weave needs at least 64 MB of memory for data"
 # A cold cache sends every read to the client's database.
-ASK   BEFORE restart IF role == 'cache' AND used > 1073741824 \
+ASK   BEFORE restart IF role == 'cache' AND used > 1GB \
       BECAUSE "a restart empties the cache, and every read then goes to the app's database"
-ASK   BEFORE patch   IF role == 'cache' AND used > 1073741824 AND pending > 0 \
+ASK   BEFORE patch   IF role == 'cache' AND used > 1GB AND pending > 0 \
       BECAUSE "an update restarts Valkey and empties the cache, so every read then goes to the app's database"
 # A store whose only copy is on this box.
 ASK   IF role == 'store' AND NOT copies BECAUSE "the only copy of the data is on this box"
 
 # ── Install ────────────────────────────────────────────
 
-FACT valkey  "exits 0 when valkey-server and valkey-cli are installed"
+FACT valkey  BOOL "exits 0 when valkey-server and valkey-cli are installed"
 
 GOAL installed  "Valkey is installed"  valkey
 
@@ -61,7 +61,7 @@ EOF
 
 # ── Running ────────────────────────────────────────────
 
-FACT up  valkey-cli ping | grep -qx PONG
+FACT up  BOOL  valkey-cli ping | grep -qx PONG
 
 GOAL running  "Valkey answers"  AFTER installed  up
 
@@ -71,12 +71,12 @@ ACTION restart "Restart Valkey" FOR running WITHIN 5m
 
 # ── Role: memory, eviction, persistence ────────────────
 
-FACT max     valkey-cli config get maxmemory | tail -1
-FACT policy  valkey-cli config get maxmemory-policy | tail -1
-FACT aof     valkey-cli config get appendonly | tail -1
+FACT max     NUMBER B  valkey-cli config get maxmemory | tail -1
+FACT policy  TEXT      valkey-cli config get maxmemory-policy | tail -1
+FACT aof     TEXT      valkey-cli config get appendonly | tail -1
 
 GOAL sized  "Valkey has $memory MB and the settings of a $role"  AFTER running \
-     max == memory * 1048576 AND \
+     max == memory * 1MB AND \
      ((role == 'cache' AND policy == 'allkeys-lru' AND aof == 'no') OR \
       (role == 'store' AND policy == 'noeviction'  AND aof == 'yes'))
 
@@ -106,8 +106,8 @@ EOF
 
 # ── Access ─────────────────────────────────────────────
 
-FACT local_only  "exits 0 when port 6379 listens on loopback addresses only"
-FACT auth_on     [ -n "$(valkey-cli config get requirepass | tail -1)" ]
+FACT local_only  BOOL  "exits 0 when port 6379 listens on loopback addresses only"
+FACT auth_on     BOOL  [ -n "$(valkey-cli config get requirepass | tail -1)" ]
 
 GOAL guarded  "connections are allowed only as you chose: $access"  AFTER running \
      (access == 'local' AND local_only) OR (access == 'private' AND auth_on)
@@ -136,13 +136,13 @@ EOF
 
 # ── Memory and clients ─────────────────────────────────
 
-FACT used      valkey-cli info memory | awk -F: '/^used_memory:/ {print $2}'
-FACT rejected  valkey-cli info stats | awk -F: '/^rejected_connections:/ {print $2}'
+FACT used      NUMBER B  valkey-cli info memory | awk -F: '/^used_memory:/ {print $2}'
+FACT rejected  NUMBER    valkey-cli info stats | awk -F: '/^rejected_connections:/ {print $2}'
 
 GOAL room       "the store is less than 90% full" \
                 AFTER running  EVERY 5m  used < max * 0.9           IF role == 'store'
 GOAL accepting  "Valkey turns away no new connections" \
-                AFTER running  EVERY 5m  rejected == PREV(rejected)
+                AFTER running  EVERY 5m  DELTA(rejected) == 0
 
 ACTION raise-clients "Allow more connections" FOR accepting WITHIN 5m
   WHEN "the server answers, but rejects new connections at maxclients while memory has room"
@@ -162,7 +162,7 @@ EOF
 
 # ── Persistence and copies ─────────────────────────────
 
-FACT aof_ok  valkey-cli info persistence | grep -q '^aof_last_write_status:ok'
+FACT aof_ok  BOOL  valkey-cli info persistence | grep -q '^aof_last_write_status:ok'
 
 GOAL persisted  "the store saves its data to disk" \
                 AFTER running  EVERY 5m  aof_ok                     IF role == 'store'
@@ -194,8 +194,8 @@ EOF
 # ── Updates ────────────────────────────────────────────
 
 # Unattended upgrades skip valkey: its update restarts the server, which empties a cache.
-FACT unattended  grep -q valkey /etc/apt/apt.conf.d/51subweave-valkey && systemctl is-active -q unattended-upgrades
-FACT pending     apt-get -s upgrade | grep -c '^Inst valkey' || true
+FACT unattended  BOOL    grep -q valkey /etc/apt/apt.conf.d/51subweave-valkey && systemctl is-active -q unattended-upgrades
+FACT pending     NUMBER  apt-get -s upgrade | grep -c '^Inst valkey' || true
 
 GOAL patched  "security updates install by themselves, and no Valkey update waits" \
               AFTER running  EVERY 1d  unattended AND pending == 0
@@ -210,10 +210,10 @@ ACTION patch "Install the updates" FOR patched WITHIN 15m
 
 # ── Logs ───────────────────────────────────────────────
 
-FACT logs  FOLLOW "new warning lines of /var/log/valkey/valkey-server.log, the ones marked ' # '"
+FACT logs  LINES  "new warning lines of /var/log/valkey/valkey-server.log, the ones marked ' # '"
 
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
-     "the new lines in `logs` show nothing that needs action"
+     "the lines in `logs` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 

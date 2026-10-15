@@ -28,7 +28,7 @@ NEVER IF interval < 1s BECAUSE "the weave collects metrics at most once a second
 
 # ── Install ────────────────────────────────────────────
 
-FACT telegraf  command -v telegraf
+FACT telegraf  BOOL  command -v telegraf
 
 GOAL installed  "Telegraf is installed"  telegraf
 
@@ -47,7 +47,7 @@ ACTION install "Install Telegraf" FOR installed WITHIN 10m
 # ── Configuration ──────────────────────────────────────
 
 # Telegraf reads /etc/default/telegraf as its environment and fills ${VAR} in its config.
-FACT written <<EOF
+FACT written BOOL <<EOF
   grep -qxF "SHOP=$shop" /etc/default/telegraf &&
   grep -qxF "TILLS=$tills" /etc/default/telegraf &&
   grep -qxF "INTERVAL=$interval" /etc/default/telegraf &&
@@ -55,7 +55,7 @@ FACT written <<EOF
   grep -qxF "INFLUX_ORG=$org" /etc/default/telegraf &&
   grep -qxF "INFLUX_BUCKET=$bucket" /etc/default/telegraf
 EOF
-FACT valid <<EOF
+FACT valid BOOL <<EOF
   set -a && . /etc/default/telegraf
   telegraf --test --config /etc/telegraf/telegraf.conf \
     --config-directory /etc/telegraf/telegraf.d > /dev/null 2>&1
@@ -102,19 +102,19 @@ ACTION configure "Write the Telegraf settings" FOR configured WITHIN 5m
 
 # ── Running and the buffer ─────────────────────────────
 
-FACT up      systemctl is-active -q telegraf
-FACT uplink  curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url/ping"
-FACT buffer  du -sm /var/lib/telegraf/buffer | cut -f1
-FACT logs    FOLLOW journalctl -f -n 0 -u telegraf | grep --line-buffered -E ' [EW]! '
+FACT up      BOOL       systemctl is-active -q telegraf
+FACT uplink  NUMBER     curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url/ping"
+FACT buffer  NUMBER MB  du -sm /var/lib/telegraf/buffer | cut -f1
+FACT logs    LINES      journalctl -f -n 0 -u telegraf | grep --line-buffered -E ' [EW]! '
 
 GOAL running   "Telegraf is running" \
                AFTER configured             up
 GOAL draining  "metrics saved on disk reach the central server once it answers" \
-               AFTER running     EVERY 15m  uplink != 204 OR buffer < 50 OR buffer < PREV(buffer)
+               AFTER running     EVERY 15m  uplink != 204 OR buffer < 50MB OR DELTA(buffer) < 0MB
 # A second failure within a day goes to the person: a restart did not help.
 GOAL quiet     "the logs show no trouble" \
                AFTER running     EVERY 30m  TRIES 1 PER 1d \
-     "the new lines in `logs` show nothing that needs action"
+     "the lines in `logs` show nothing that needs action"
 
 ACTION restart "Restart Telegraf" FOR running, draining, quiet WITHIN 2m
   WHEN "Telegraf stopped, its buffer stopped draining, or it logs errors it does not recover from"
@@ -122,12 +122,12 @@ ACTION restart "Restart Telegraf" FOR running, draining, quiet WITHIN 2m
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT disk     df --output=pcent /var/lib/telegraf | tail -1 | tr -dc 0-9
-FACT junk_mb  du -scm /var/log/journal /var/cache/apt/archives | tail -1 | cut -f1
+FACT disk     NUMBER %   df --output=pcent /var/lib/telegraf | tail -1 | tr -dc 0-9
+FACT junk_mb  NUMBER MB  du -scm /var/log/journal /var/cache/apt/archives | tail -1 | cut -f1
 
-GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90
+GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90%
 
-ACTION trim "Delete old logs and package files" FOR room WITHIN 5m IF junk_mb > 300
+ACTION trim "Delete old logs and package files" FOR room WITHIN 5m IF junk_mb > 300MB
   WHEN "the systemd journal or the apt cache, not Telegraf's buffer, fills the disk"
   RUN  journalctl --vacuum-size=200M
   RUN  apt-get clean
@@ -135,8 +135,8 @@ ACTION trim "Delete old logs and package files" FOR room WITHIN 5m IF junk_mb > 
 # ── Firewall and updates ───────────────────────────────
 
 # Telegraf only sends: the shop's network reaches nothing on this box but SSH.
-FACT ufw         ufw status | grep -qx 'Status: active'
-FACT unattended  systemctl is-active -q unattended-upgrades
+FACT ufw         BOOL  ufw status | grep -qx 'Status: active'
+FACT unattended  BOOL  systemctl is-active -q unattended-upgrades
 
 GOAL fenced   "the firewall is on" \
               AFTER installed  EVERY 1h  ufw
@@ -155,7 +155,7 @@ ACTION patch "Turn on security updates" FOR patched WITHIN 10m
 
 # ── Tills ──────────────────────────────────────────────
 
-FACT unreachable <<EOF
+FACT unreachable NUMBER <<EOF
   for a in ${tills//,/ }; do ping -c1 -W2 "$a" > /dev/null || echo "$a"; done | wc -l
 EOF
 

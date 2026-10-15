@@ -30,13 +30,12 @@ ASK   "before a vLLM upgrade"
 
 # ── GPU and driver ─────────────────────────────────────
 
-FACT gpu        nvidia-smi -L
-FACT xid        "the number of kernel log lines with 'NVRM: Xid' in the last 10 minutes, a number"
-FACT xid_lines  "the last 5 kernel log lines with 'NVRM: Xid' in the last 10 minutes"
+FACT gpu  BOOL   nvidia-smi -L
+FACT xid  LINES  journalctl -k -f -n 0 | grep --line-buffered 'NVRM: Xid'
 
 GOAL driver       "the NVIDIA driver sees the GPU"  gpu
 GOAL gpu-healthy  "the GPU reported no errors in the last 10 minutes" \
-                  AFTER driver  EVERY 5m xid == 0
+                  AFTER driver  EVERY 5m  OVER 10m  COUNT(xid) == 0
 
 ACTION install-driver "Install the NVIDIA driver" FOR driver WITHIN 20m
   WHEN "the box has a GPU and no NVIDIA driver"
@@ -78,7 +77,7 @@ EOF
 
 # ── Install ────────────────────────────────────────────
 
-FACT vllm  /opt/vllm/bin/vllm --version
+FACT vllm  BOOL  /opt/vllm/bin/vllm --version
 
 GOAL installed  "vLLM is installed"  AFTER driver  vllm
 
@@ -104,8 +103,8 @@ EOF
 
 # ── Serving ────────────────────────────────────────────
 
-FACT up      curl -sf localhost:8000/health
-FACT served  "the id of the first model that localhost:8000/v1/models lists, \
+FACT up      BOOL  curl -sf localhost:8000/health
+FACT served  TEXT  "the id of the first model that localhost:8000/v1/models lists, \
               sending VLLM_API_KEY as a bearer token when it is set"
 
 GOAL running  "vLLM answers"       AFTER installed  up
@@ -137,12 +136,12 @@ EOF
 
 # ── Load ───────────────────────────────────────────────
 
-FACT waiting    "the sum of vllm:num_requests_waiting in localhost:8000/metrics, a number"
-FACT kv         "vllm:kv_cache_usage_perc in localhost:8000/metrics, times 100, as a whole number"
-FACT preempted  "the sum of vllm:num_preemptions_total in localhost:8000/metrics, a number"
+FACT waiting    NUMBER    "the sum of vllm:num_requests_waiting in localhost:8000/metrics"
+FACT kv         NUMBER %  "vllm:kv_cache_usage_perc in localhost:8000/metrics, times 100"
+FACT preempted  NUMBER    "the sum of vllm:num_preemptions_total in localhost:8000/metrics"
 
 GOAL keeping-up  "vLLM keeps up with its requests" \
-                 AFTER running  EVERY 5m  waiting < 20 AND preempted - PREV(preempted) < 50
+                 AFTER running  EVERY 5m  waiting < 20 AND DELTA(preempted) < 50
 
 ACTION lower-concurrency "Serve fewer requests at once" FOR keeping-up WITHIN 15m
   WHEN "the engine answers, but preempts requests for long or fills its KV cache"
@@ -164,12 +163,12 @@ EOF
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT disk       "percent used of the filesystem that holds /root/.cache, a number"
-FACT others_gb  "the size in GB of the model directories in /root/.cache/huggingface/hub other than $model's, a number"
+FACT disk       NUMBER %   "percent used of the filesystem that holds /root/.cache"
+FACT others_gb  NUMBER GB  "the size of the model directories in /root/.cache/huggingface/hub other than $model's"
 
-GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90
+GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90%
 
-ACTION free-disk "Delete the other models" FOR room WITHIN 15m IF others_gb > 1
+ACTION free-disk "Delete the other models" FOR room WITHIN 15m IF others_gb > 1GB
   WHEN "models other than $model, not $model itself, fill the disk"
   DO   "free space in /root/.cache/huggingface by removing models other than $model"
 
@@ -186,7 +185,7 @@ EOF
 # ── Updates ────────────────────────────────────────────
 
 # Unattended upgrades skip the driver and CUDA: a new driver needs a reboot and the person.
-FACT unattended <<EOF
+FACT unattended BOOL <<EOF
   grep -q nvidia /etc/apt/apt.conf.d/51subweave-gpu && systemctl is-active -q unattended-upgrades
 EOF
 
@@ -201,10 +200,10 @@ ACTION patch "Turn on security updates" FOR patched WITHIN 10m
 
 # ── Logs ───────────────────────────────────────────────
 
-FACT logs  FOLLOW "new WARNING, ERROR and Traceback lines of the vllm service's journal"
+FACT logs  LINES  "new WARNING, ERROR and Traceback lines of the vllm service's journal"
 
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 10m \
-     "the new lines in `logs` and `xid_lines` show nothing that needs action"
+     "the lines in `logs` and `xid` show nothing that needs action"
 
 # ── Anything else ──────────────────────────────────────
 

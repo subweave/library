@@ -37,7 +37,7 @@ ARG updates=auto  MAY
     auto                  "install routine and security releases of reth and Lighthouse as they come"
     ask                   "ask the person before each client update"
     fix                   "update only when a failure needs a newer release: a bug it fixes, or a hard fork"
-ARG lag=60        MAY     "how many seconds the newest block may trail the clock, a number like 60; \
+ARG lag=60s       MAY     "how long the newest block may trail the clock, a duration like 60s; \
                            a slot is 12 seconds"
 
 # ── Rules ──────────────────────────────────────────────
@@ -69,7 +69,7 @@ ASK   IF blocks < 10064 BECAUSE "reth keeps at least 10064 blocks of history, mo
 
 # ── Install ────────────────────────────────────────────
 
-FACT present <<EOF
+FACT present BOOL <<EOF
   if [ -n "$reth_container" ]; then docker inspect "$reth_container" "$lighthouse_container" > /dev/null
   else command -v reth && command -v lighthouse; fi
 EOF
@@ -108,15 +108,15 @@ EOF
 
 # ── Running ────────────────────────────────────────────
 
-FACT el_up <<EOF
+FACT el_up BOOL <<EOF
   if [ -n "$reth_container" ]; then [ "$(docker inspect -f '{{.State.Running}}' "$reth_container")" = true ]
   else systemctl is-active -q reth; fi
 EOF
-FACT cl_up <<EOF
+FACT cl_up BOOL <<EOF
   if [ -n "$lighthouse_container" ]; then [ "$(docker inspect -f '{{.State.Running}}' "$lighthouse_container")" = true ]
   else systemctl is-active -q lighthouse; fi
 EOF
-FACT exits <<EOF
+FACT exits TEXT <<EOF
   if [ -n "$reth_container" ]; then
     docker inspect -f '{{.Name}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} finished={{.State.FinishedAt}} restarts={{.RestartCount}}' "$reth_container" "$lighthouse_container"
   else
@@ -140,28 +140,28 @@ ACTION start "Start the stopped clients" FOR running WITHIN 15m
 
 # ── Following the chain ────────────────────────────────
 
-FACT head_age <<EOF
+FACT head_age NUMBER s <<EOF
   ts=$(curl -sf -m3 -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["latest",false]}' \
     http://127.0.0.1:8545 | grep -o '"timestamp":"0x[0-9a-f]*"' | cut -d'"' -f4)
   [ -n "$ts" ] && echo $(( $(date +%s) - ts ))
 EOF
-FACT cl_health  curl -s -m3 -o /dev/null -w '%{http_code}' http://127.0.0.1:5052/eth/v1/node/health
-FACT cl_behind  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/syncing | grep -o '"sync_distance":"[0-9]*"' | tr -dc 0-9
-FACT el_syncing <<EOF
+FACT cl_health  NUMBER  curl -s -m3 -o /dev/null -w '%{http_code}' http://127.0.0.1:5052/eth/v1/node/health
+FACT cl_behind  NUMBER  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/syncing | grep -o '"sync_distance":"[0-9]*"' | tr -dc 0-9
+FACT el_syncing TEXT <<EOF
   curl -sf -m3 -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"eth_syncing","params":[]}' http://127.0.0.1:8545 \
     | grep -q '"result":false' && echo no || echo yes
 EOF
 # The decider reads these beside a stalled head: a busy disk is not a broken client.
-FACT io_stall      awk '/^some/ {split($3, a, "="); print a[2]}' /proc/pressure/io
-FACT load_per_cpu  awk -v n="$(nproc)" '{printf "%.2f\n", $1 / n}' /proc/loadavg
+FACT io_stall      NUMBER %  awk '/^some/ {split($3, a, "="); print a[2]}' /proc/pressure/io
+FACT load_per_cpu  NUMBER    awk -v n="$(nproc)" '{printf "%.2f\n", $1 / n}' /proc/loadavg
 
 # Lighthouse answers 206 while it syncs; reth's eth_syncing says false even when no
 # consensus client drives it any more, so the head's age is the real signal.
 GOAL synced  "Lighthouse has caught up with the chain" \
              AFTER running  EVERY 2m  cl_health == 200 AND cl_behind < 64
-GOAL at-tip  "the newest block on the node is less than $lag seconds old" \
+GOAL at-tip  "the newest block on the node is less than $lag old" \
              AFTER synced   EVERY 1m  head_age < lag
 
 ACTION restart-lighthouse "Restart Lighthouse" FOR synced, at-tip, quiet WITHIN 10m
@@ -219,13 +219,13 @@ EOF
 
 # ── Peers ──────────────────────────────────────────────
 
-FACT el_peers <<EOF
+FACT el_peers NUMBER <<EOF
   p=$(curl -sf -m3 -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"net_peerCount","params":[]}' http://127.0.0.1:8545 \
     | grep -o '"result":"0x[0-9a-f]*"' | cut -d'"' -f4)
   [ -n "$p" ] && echo $(( p ))
 EOF
-FACT cl_peers  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/peer_count | grep -o '"connected":"[0-9]*"' | tr -dc 0-9
+FACT cl_peers  NUMBER  curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/peer_count | grep -o '"connected":"[0-9]*"' | tr -dc 0-9
 
 GOAL peered  "both clients connect to enough other nodes" \
              AFTER running  EVERY 5m  el_peers >= 5 AND cl_peers >= 10
@@ -250,10 +250,10 @@ EOF
 # ── Engine API and JSON-RPC ────────────────────────────
 
 # Anything but loopback on 8551 counts.
-FACT engine_open  ss -ltnH 'sport = :8551' | awk '$4 !~ /^(127\.0\.0\.1|\[::1\]):/' | wc -l
+FACT engine_open  NUMBER  ss -ltnH 'sport = :8551' | awk '$4 !~ /^(127\.0\.0\.1|\[::1\]):/' | wc -l
 # How far JSON-RPC (8545, 8546) reaches: local, private or public. An address beyond
 # loopback counts only where the box's firewall lets it in; Docker-published ports skip ufw.
-FACT rpc_reach <<EOF
+FACT rpc_reach TEXT <<EOF
   reach=local
   widen() { case "$reach/$1" in local/*) reach=$1 ;; private/public) reach=public ;; esac; }
   ufw_denies=no
@@ -309,22 +309,22 @@ EOF
 
 # ── Disk ───────────────────────────────────────────────
 
-FACT el_disk   df --output=pcent "$reth_data" | tail -1 | tr -dc 0-9
-FACT cl_disk   df --output=pcent "$lighthouse_data" | tail -1 | tr -dc 0-9
-FACT log_disk  df --output=pcent /var/log $([ -d /var/lib/docker ] && echo /var/lib/docker) | tail -n +2 | tr -dc '0-9\n' | sort -n | tail -1
-FACT logs_gb <<EOF
+FACT el_disk   NUMBER %  df --output=pcent "$reth_data" | tail -1 | tr -dc 0-9
+FACT cl_disk   NUMBER %  df --output=pcent "$lighthouse_data" | tail -1 | tr -dc 0-9
+FACT log_disk  NUMBER %  df --output=pcent /var/log $([ -d /var/lib/docker ] && echo /var/lib/docker) | tail -n +2 | tr -dc '0-9\n' | sort -n | tail -1
+FACT logs_gb NUMBER GB <<EOF
   {
     du -sb /var/log/journal | cut -f1
     if [ -n "$reth_container" ]; then
       for c in "$reth_container" "$lighthouse_container"; do stat -c %s "$(docker inspect -f '{{.LogPath}}' "$c")"; done
     fi
-  } | awk '{s += $1} END {printf "%.1f\n", s / 1e9}'
+  } | awk '{s += $1} END {printf "%.1f\n", s / 1073741824}'
 EOF
 
 GOAL room  "the disks for chain data and logs have room left" \
-           AFTER installed  EVERY 5m  el_disk < 85 AND cl_disk < 85 AND log_disk < 90
+           AFTER installed  EVERY 5m  el_disk < 85% AND cl_disk < 85% AND log_disk < 90%
 
-ACTION free-logs "Shrink the logs" FOR room WITHIN 10m IF logs_gb > 2
+ACTION free-logs "Shrink the logs" FOR room WITHIN 10m IF logs_gb > 2GB
   WHEN "logs, not chain data, fill a disk: the systemd journal or a client container's log file"
   RUN  journalctl --vacuum-size=500M
   RUN <<EOF
@@ -348,7 +348,7 @@ EOF
 
 # ── Clock ──────────────────────────────────────────────
 
-FACT ntp  test "$(timedatectl show -p NTPSynchronized --value)" = yes
+FACT ntp  BOOL  test "$(timedatectl show -p NTPSynchronized --value)" = yes
 
 GOAL clock  "the clock keeps the right time from the internet"  AFTER installed  EVERY 1h  ntp
 
@@ -359,7 +359,7 @@ ACTION sync-clock "Turn on clock sync" FOR clock WITHIN 15m
 # ── Updates ────────────────────────────────────────────
 
 # The running versions come from the clients themselves, so adopted containers count too.
-FACT behind <<EOF
+FACT behind TEXT <<EOF
   el=$(curl -sf -m3 -H 'content-type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:8545 \
     | grep -o 'reth/v[0-9][0-9.]*' | cut -d/ -f2)
@@ -374,7 +374,7 @@ FACT behind <<EOF
   older "$cl" "$cl_new" && out+=("Lighthouse $cl, newest $cl_new")
   if [ ${#out[@]} -eq 0 ]; then echo none; else (IFS=';'; echo "${out[*]}" | sed 's/;/; /g'); fi
 EOF
-FACT releases <<EOF
+FACT releases TEXT <<EOF
   for r in paradigmxyz/reth sigp/lighthouse; do
     curl -sf -m5 "https://api.github.com/repos/$r/releases/latest" \
       | grep -E '"(tag_name|body)":' | cut -c1-1500
@@ -459,7 +459,7 @@ EOF
 
 # ── Logs ───────────────────────────────────────────────
 
-FACT logs FOLLOW <<EOF
+FACT logs LINES <<EOF
   if [ -n "$reth_container" ]; then
     { docker logs -f -n 0 "$reth_container" 2>&1 & docker logs -f -n 0 "$lighthouse_container" 2>&1; }
   else
@@ -470,7 +470,7 @@ EOF
 # Seen on a healthy mainnet node every few minutes: Lighthouse rejecting a late or
 # invalid gossip block, and reth noting Engine API methods Lighthouse does not call.
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
-     "the new lines in `logs` show nothing that needs action; peer churn, a rejected \
+     "the lines in `logs` show nothing that needs action; peer churn, a rejected \
       gossip block, a note about Engine API methods one client does not use, and a rare \
       reorg are normal"
 

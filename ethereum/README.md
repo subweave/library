@@ -15,7 +15,7 @@ subweave run ethereum "mainnet; reth container reth, lighthouse container lighth
 | `history` | SHOULD | `full` | `archive`, `full`, `minimal`, or `last <blocks> blocks`; reth keeps at least 10064 |
 | `rpc` | SHOULD | `local` | JSON-RPC on `local`host only, the `private` network, or `open` behind a firewall outside the box |
 | `updates` | MAY | `auto` | `auto` installs new releases; `ask` asks before each update; `fix` updates only when a failure needs a newer release |
-| `lag` | MAY | `60` | seconds the newest block may trail the clock |
+| `lag` | MAY | `60s` | how long the newest block may trail the clock |
 
 ## Two ways to run
 
