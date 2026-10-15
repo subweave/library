@@ -16,7 +16,7 @@ The daemon asks for the app's password and the two bucket keys once, then instal
 | `endpoint` | MAY | — | an S3-compatible store other than Amazon S3 |
 | `keep` | MAY | `7` | daily base backups to keep |
 | `database` | MAY | `app` | the app's database and role |
-| `updates` | MAY | `auto` | `auto`, or `ask` before each minor release |
+| `updates` | MAY | `auto` | `auto`, or `ask` before each update; `ASK BEFORE CHANGES version` holds `patch` and `upgrade` |
 
 ```
 installed

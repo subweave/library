@@ -37,13 +37,13 @@ GOAL driver       "the NVIDIA driver sees the GPU"  gpu
 GOAL gpu-healthy  "the GPU reported no errors in the last 10 minutes" \
                   AFTER driver  EVERY 5m  OVER 10m  COUNT(xid) == 0
 
-ACTION install-driver "Install the NVIDIA driver" FOR driver WITHIN 20m
+ACTION install-driver "Install the NVIDIA driver" FOR driver WITHIN 20m CHANGES version, restart
   WHEN "the box has a GPU and no NVIDIA driver"
   DO   "install the NVIDIA server driver for compute with ubuntu-drivers, and the matching \
         nvidia-utils server package for nvidia-smi"
   RUN  systemctl reboot
 
-ACTION reboot "Reboot the box" FOR gpu-healthy, running WITHIN 15m
+ACTION reboot "Reboot the box" FOR gpu-healthy, running WITHIN 15m CHANGES restart
   WHEN "an NVIDIA Xid error left the GPU unusable"
   RUN  systemctl reboot
 
@@ -81,7 +81,7 @@ FACT vllm  BOOL  /opt/vllm/bin/vllm --version
 
 GOAL installed  "vLLM is installed"  AFTER driver  vllm
 
-ACTION install "Install vLLM" FOR installed WITHIN 1h
+ACTION install "Install vLLM" FOR installed WITHIN 1h CHANGES version, config, network
   WHEN "vLLM is missing"
   DO <<EOF
     Install the latest vLLM release with uv into /opt/vllm.
@@ -110,11 +110,11 @@ FACT served  TEXT  "the id of the first model that localhost:8000/v1/models list
 GOAL running  "vLLM answers"       AFTER installed  up
 GOAL serving  "vLLM serves $model"  AFTER running    served == model
 
-ACTION restart "Restart vLLM" FOR running, gpu-healthy, quiet WITHIN 15m
+ACTION restart "Restart vLLM" FOR running, gpu-healthy, quiet WITHIN 15m CHANGES restart
   WHEN "the engine hung or crashed, or an application Xid error (13, 31, 43) hit a healthy GPU"
   RUN  systemctl restart vllm
 
-ACTION serve "Switch to the requested model" FOR serving WITHIN 1h
+ACTION serve "Switch to the requested model" FOR serving WITHIN 1h CHANGES config, restart
   WHEN "the server runs, but serves a model other than $model"
   DO   "change the model in the vllm unit to $model, keeping the other flags \
         that still fit it, and restart vllm"
@@ -143,7 +143,7 @@ FACT preempted  NUMBER    "the sum of vllm:num_preemptions_total in localhost:80
 GOAL keeping-up  "vLLM keeps up with its requests" \
                  AFTER running  EVERY 5m  waiting < 20 AND DELTA(preempted) < 50
 
-ACTION lower-concurrency "Serve fewer requests at once" FOR keeping-up WITHIN 15m
+ACTION lower-concurrency "Serve fewer requests at once" FOR keeping-up WITHIN 15m CHANGES config, restart
   WHEN "the engine answers, but preempts requests for long or fills its KV cache"
   DO   "lower --max-num-seqs in the vllm unit by a quarter, restart vllm, and say the new value"
 
@@ -168,7 +168,7 @@ FACT others_gb  NUMBER GB  "the size of the model directories in /root/.cache/hu
 
 GOAL room  "the disk is less than 90% full"  AFTER installed  EVERY 10m  disk < 90%
 
-ACTION free-disk "Delete the other models" FOR room WITHIN 15m IF others_gb > 1GB
+ACTION free-disk "Delete the other models" FOR room WITHIN 15m CHANGES data IF others_gb > 1GB
   WHEN "models other than $model, not $model itself, fill the disk"
   DO   "free space in /root/.cache/huggingface by removing models other than $model"
 
@@ -191,7 +191,7 @@ EOF
 
 GOAL patched  "Ubuntu installs security updates by itself"  AFTER installed  EVERY 1d  unattended
 
-ACTION patch "Turn on security updates" FOR patched WITHIN 10m
+ACTION patch "Turn on security updates" FOR patched WITHIN 10m CHANGES config
   WHEN "Ubuntu's unattended security upgrades are off"
   ADD <<EOF /etc/apt/apt.conf.d/51subweave-gpu
     Unattended-Upgrade::Package-Blacklist { "nvidia-"; "libnvidia-"; "cuda-"; };
@@ -207,7 +207,7 @@ GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 10m \
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix "Fix the failing goal" WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m CHANGES restart, config, version, data, network
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting the files of $model, changing the driver, \
         or stopping vllm for longer than a restart"

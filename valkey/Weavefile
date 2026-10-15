@@ -28,10 +28,8 @@ NEVER "open port 6379 to the internet"
 NEVER "change the dir or dbfilename settings at runtime"
 NEVER IF memory < 64 BECAUSE "the weave needs at least 64 MB of memory for data"
 # A cold cache sends every read to the client's database.
-ASK   BEFORE restart IF role == 'cache' AND used > 1GB \
+ASK   BEFORE CHANGES restart IF role == 'cache' AND used > 1GB \
       BECAUSE "a restart empties the cache, and every read then goes to the app's database"
-ASK   BEFORE patch   IF role == 'cache' AND used > 1GB AND pending > 0 \
-      BECAUSE "an update restarts Valkey and empties the cache, so every read then goes to the app's database"
 # A store whose only copy is on this box.
 ASK   IF role == 'store' AND NOT copies BECAUSE "the only copy of the data is on this box"
 
@@ -41,7 +39,7 @@ FACT valkey  BOOL "exits 0 when valkey-server and valkey-cli are installed"
 
 GOAL installed  "Valkey is installed"  valkey
 
-ACTION install "Install Valkey" FOR installed WITHIN 5m
+ACTION install "Install Valkey" FOR installed WITHIN 5m CHANGES version, config
   WHEN "valkey-server is missing"
   DO   "install valkey-server from Ubuntu's packages, and set vm.overcommit_memory = 1 for good"
 
@@ -65,7 +63,7 @@ FACT up  BOOL  valkey-cli ping | grep -qx PONG
 
 GOAL running  "Valkey answers"  AFTER installed  up
 
-ACTION restart "Restart Valkey" FOR running WITHIN 5m
+ACTION restart "Restart Valkey" FOR running WITHIN 5m CHANGES restart
   WHEN "valkey-server crashed or hangs"
   RUN  systemctl restart valkey-server
 
@@ -80,7 +78,7 @@ GOAL sized  "Valkey has $memory MB and the settings of a $role"  AFTER running \
      ((role == 'cache' AND policy == 'allkeys-lru' AND aof == 'no') OR \
       (role == 'store' AND policy == 'noeviction'  AND aof == 'yes'))
 
-ACTION size "Apply the memory settings" FOR sized WITHIN 2m
+ACTION size "Apply the memory settings" FOR sized WITHIN 2m CHANGES config
   WHEN "memory, eviction or persistence differ from the role"
   DO   "set maxmemory to $memory MB and the eviction and persistence of role '$role', \
         then save them with CONFIG REWRITE"
@@ -112,7 +110,7 @@ FACT auth_on     BOOL  [ -n "$(valkey-cli config get requirepass | tail -1)" ]
 GOAL guarded  "connections are allowed only as you chose: $access"  AFTER running \
      (access == 'local' AND local_only) OR (access == 'private' AND auth_on)
 
-ACTION guard "Apply the access settings" FOR guarded WITHIN 10m
+ACTION guard "Apply the access settings" FOR guarded WITHIN 10m CHANGES config, network, restart
   WHEN "the password or the listening addresses differ from access '$access'"
   DO <<EOF
     Access is '$access'.
@@ -144,7 +142,7 @@ GOAL room       "the store is less than 90% full" \
 GOAL accepting  "Valkey turns away no new connections" \
                 AFTER running  EVERY 5m  DELTA(rejected) == 0
 
-ACTION raise-clients "Allow more connections" FOR accepting WITHIN 5m
+ACTION raise-clients "Allow more connections" FOR accepting WITHIN 5m CHANGES config
   WHEN "the server answers, but rejects new connections at maxclients while memory has room"
   DO   "raise maxclients by half, within the open-file limit of the valkey-server unit, \
         and save it with CONFIG REWRITE"
@@ -169,11 +167,11 @@ GOAL persisted  "the store saves its data to disk" \
 GOAL copied     "the newest copy of the data is less than 25 hours old" \
                 AFTER running            SINCE(backup) < 25h        IF copies
 
-ACTION rewrite-aof "Rewrite the data file" FOR persisted WITHIN 15m
+ACTION rewrite-aof "Rewrite the data file" FOR persisted WITHIN 15m CHANGES data
   WHEN "AOF writes failed, and disk space came back"
   RUN  valkey-cli bgrewriteaof
 
-ACTION backup "Copy the data off the box" FOR copied WITHIN 30m IF copies
+ACTION backup "Copy the data off the box" FOR copied WITHIN 30m CHANGES data IF copies
   WHEN "the last copy is older than a day"
   DO   "save an RDB snapshot with valkey-cli --rdb to /var/backups, copy it to $copies with scp, \
         and keep 3 days of snapshots on the box"
@@ -200,12 +198,15 @@ FACT pending     NUMBER  apt-get -s upgrade | grep -c '^Inst valkey' || true
 GOAL patched  "security updates install by themselves, and no Valkey update waits" \
               AFTER running  EVERY 1d  unattended AND pending == 0
 
-ACTION patch "Install the updates" FOR patched WITHIN 15m
-  WHEN "unattended security upgrades are off, or an Ubuntu update of valkey is pending"
+ACTION unattend "Turn on security updates" FOR patched WITHIN 10m CHANGES config
+  WHEN "Ubuntu's unattended security upgrades are off"
   ADD <<EOF /etc/apt/apt.conf.d/51subweave-valkey
     Unattended-Upgrade::Package-Blacklist { "valkey"; };
   EOF
   RUN  apt-get install -y unattended-upgrades && systemctl enable --now unattended-upgrades
+
+ACTION patch "Install the Valkey update" FOR patched WITHIN 15m CHANGES version, restart IF pending > 0
+  WHEN "an Ubuntu update of valkey is pending"
   RUN  apt-get install -y --only-upgrade valkey-server valkey-tools
 
 # ── Logs ───────────────────────────────────────────────
@@ -217,6 +218,6 @@ GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
 
 # ── Anything else ──────────────────────────────────────
 
-ACTION fix "Fix the failing goal" WITHIN 30m
+ACTION fix "Fix the failing goal" WITHIN 30m CHANGES restart, config, version, data, network
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting keys"
