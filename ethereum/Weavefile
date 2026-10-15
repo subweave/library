@@ -55,14 +55,14 @@ ASK   BEFORE resync BECAUSE "a resync deletes all chain data and takes a day or 
 ASK   BEFORE update IF updates == 'ask' BECAUSE "you chose to approve each client update"
 # Adopted clients run on a host with an owner: every change waits for the person,
 # until the person answers `always` for that action.
-ASK   BEFORE start IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE restart-reth IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE restart-lighthouse IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE seal IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE fence IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE free-logs IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE sync-clock IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
-ASK   BEFORE fix IF reth_container BECAUSE "the reth and Lighthouse containers belong to their owner"
+ASK   BEFORE start IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE restart-reth IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE restart-lighthouse IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE seal IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE fence IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE free-logs IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE sync-clock IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
+ASK   BEFORE fix IF reth_container BECAUSE "you run reth and Lighthouse in your own containers"
 # reth keeps at least 10064 blocks of state history; fewer is not possible
 ASK   IF blocks < 10064 BECAUSE "reth keeps at least 10064 blocks of history, more than you asked for"
 
