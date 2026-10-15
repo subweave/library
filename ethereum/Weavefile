@@ -248,7 +248,15 @@ EOF
 # Anything but loopback on 8551 counts.
 FACT engine_open  ss -ltnH 'sport = :8551' | awk '$4 !~ /^(127\.0\.0\.1|\[::1\]):/' | wc -l
 FACT rpc_listen   ss -ltnH 'sport = :8545' | awk '{print $4}' | sort -u | paste -sd' '
-FACT firewall     "the active ufw rules for port 8545, or 'inactive'"
+FACT firewall <<EOF
+  if command -v ufw > /dev/null && ufw status | grep -q '^Status: active'; then
+    rules=$(ufw status | grep -E '^(8545|8546)[/ ]' | tr -s ' ' | paste -sd';' || true)
+    incoming=$(ufw status verbose | grep -o '[a-z]* (incoming)' || true)
+    echo "ufw active, default ${incoming:-unknown}; ${rules:-no rule for 8545 or 8546}"
+  else
+    echo inactive
+  fi
+EOF
 
 GOAL sealed  AFTER running             engine_open == 0
 GOAL fenced  AFTER running  EVERY 1h \
@@ -325,11 +333,25 @@ ACTION sync-clock FOR clock WITHIN 15m
 
 # ── Updates ────────────────────────────────────────────
 
-FACT outdated "how many of reth and Lighthouse run an older version than their newest GitHub release: \
-               the running versions come from web3_clientVersion on localhost:8545 and \
-               /eth/v1/node/version on localhost:5052; a number"
-FACT releases "the tag and the first 1500 characters of the notes of the newest GitHub release \
-               of paradigmxyz/reth and of sigp/lighthouse"
+# The running versions come from the clients themselves, so adopted containers count too.
+FACT outdated <<EOF
+  el=$(curl -sf -m3 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:8545 \
+    | grep -o 'reth/v[0-9][0-9.]*' | cut -d/ -f2)
+  cl=$(curl -sf -m3 http://127.0.0.1:5052/eth/v1/node/version | grep -o 'Lighthouse/v[0-9][0-9.]*' | cut -d/ -f2)
+  tag() { curl -sf -m5 "https://api.github.com/repos/$1/releases/latest" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4; }
+  el_new=$(tag paradigmxyz/reth)
+  cl_new=$(tag sigp/lighthouse)
+  [ -n "$el" ] && [ -n "$cl" ] && [ -n "$el_new" ] && [ -n "$cl_new" ]
+  behind() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$1" ] && echo 1 || echo 0; }
+  echo $(( $(behind "$el" "$el_new") + $(behind "$cl" "$cl_new") ))
+EOF
+FACT releases <<EOF
+  for r in paradigmxyz/reth sigp/lighthouse; do
+    curl -sf -m5 "https://api.github.com/repos/$r/releases/latest" \
+      | grep -E '"(tag_name|body)":' | cut -c1-1500
+  done
+EOF
 
 # With adopted containers the update is the owner's: a newer release goes to the person.
 GOAL current  AFTER synced  EVERY 1d  TRIES 1 PER 7d  outdated == 0
