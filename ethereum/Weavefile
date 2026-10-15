@@ -467,12 +467,14 @@ FACT logs LINES <<EOF
   fi | grep --line-buffered -E 'WARN|ERRO|CRIT'
 EOF
 
-# Seen on a healthy mainnet node every few minutes: Lighthouse rejecting a late or
-# invalid gossip block, and reth noting Engine API methods Lighthouse does not call.
 GOAL quiet  "the logs show no trouble"  AFTER running  EVERY 15m \
-     "the lines in `logs` show nothing that needs action; peer churn, a rejected \
-      gossip block, a note about Engine API methods one client does not use, and a rare \
-      reorg are normal"
+     "the lines in `logs` show nothing that needs action"
+
+# Seen on a healthy mainnet node every few minutes.
+# Lighthouse rejects a gossip block it cannot verify; the network drops the block.
+KNOWN quiet NORMAL "Oct 15 07:50:54.625 WARN  Could not verify block for gossip. Rejecting the block  error: InvalidSignature(ProposerSignature)"
+# reth notes Engine API methods the consensus client does not call yet.
+KNOWN quiet NORMAL "2026-10-15T07:44:25.748250Z  WARN rpc::engine: Reth supports Engine API methods that CL doesn't. Consider upgrading your consensus client. missing=[\"engine_forkchoiceUpdatedV4\", \"engine_getPayloadV6\", \"engine_newPayloadV5\"]"
 
 # ── Anything else ──────────────────────────────────────
 
