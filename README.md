@@ -17,7 +17,7 @@ subweave run postgres "postgres 18 for our app, private network, backups to s3:/
 | Weave | Runs | For | Box needs |
 |---|---|---|---|
 | [postgres](postgres) | PostgreSQL with continuous WAL archiving to S3-compatible storage | a 6-person SaaS team with no DBA | 2 CPU, 4 GB RAM, 40 GB disk |
-| [ethereum](ethereum) | Ethereum node: reth and lighthouse, no validator | a wallet startup leaving hosted RPC | 8 CPU, 32 GB RAM, 2 TB disk |
+| [ethereum](ethereum) | Ethereum node: reth and lighthouse, no validator | a wallet startup leaving hosted RPC | 8 CPU, 32 GB RAM, 1 TB disk |
 | [vllm](vllm) | vLLM serving one open-weights model behind an OpenAI-compatible API | a team serving its own open model | 8 CPU, 1 GPU, 64 GB RAM, 500 GB disk |
 | [store-edge](store-edge) | Telegraf in a shop: forwards metrics, buffers them while the uplink is down | a 300-shop retail chain | 2 CPU, 4 GB RAM, 64 GB disk |
 | [valkey](valkey) | Valkey as a cache or a small store | an agency with 40 client boxes | 1 CPU, 2 GB RAM, 20 GB disk |

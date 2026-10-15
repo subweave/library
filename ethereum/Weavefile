@@ -5,8 +5,8 @@
 #                          reth data in /mnt/reth, lighthouse data in /mnt/lighthouse"
 
 ABOUT  "Ethereum node: reth for execution, Lighthouse for consensus, no validator"
-FROM   ubuntu:24.04
-NEEDS  8 CPU, 32 GB RAM, 2 TB DISK
+FROM   ubuntu
+NEEDS  8 CPU, 32 GB RAM, 1 TB DISK
 MODEL  CODE deepseek/deepseek-v4-flash-0731 THEN deepseek/deepseek-v4-pro
 
 # ── What a request chooses ─────────────────────────────
