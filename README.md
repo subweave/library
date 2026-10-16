@@ -6,6 +6,7 @@ The official weaves for [Subweave](https://github.com/subweave/subweave): one fo
 
 ```
 curl -fsSL https://subweave.com/install.sh | sh
+subweave key openrouter        # reads the key from stdin
 subweave run box
 subweave run postgres "postgres 18 for our app, private network, backups to s3://acme-pg/db1"
 ```
@@ -15,17 +16,15 @@ subweave run postgres "postgres 18 for our app, private network, backups to s3:/
 
 ## Weaves
 
-| Weave | Runs | For | Box needs |
-|---|---|---|---|
-| [box](box) | the box itself: disk room, the clock, the journal's size, SSH, security updates | every box, once, beside its services | 1 CPU, 1 GB RAM, 10 GB disk |
-| [postgres](postgres) | PostgreSQL with continuous WAL archiving to S3-compatible storage | a 6-person SaaS team with no DBA | 2 CPU, 4 GB RAM, 40 GB disk |
-| [ethereum](ethereum) | Ethereum node: reth and lighthouse, no validator | a wallet startup leaving hosted RPC | 8 CPU, 32 GB RAM, 1 TB disk |
-| [vllm](vllm) | vLLM serving one open-weights model behind an OpenAI-compatible API | a team serving its own open model | 8 CPU, 1 GPU, 64 GB RAM, 500 GB disk |
-| [store-edge](store-edge) | Telegraf in a shop: forwards metrics, buffers them while the uplink is down | a 300-shop retail chain | 2 CPU, 4 GB RAM, 64 GB disk |
-| [valkey](valkey) | Valkey as a cache or a small store | an agency with 40 client boxes | 1 CPU, 2 GB RAM, 20 GB disk |
-| [minecraft](minecraft) | Paper Minecraft server with RCON, world backups and build updates | a teacher with a coding club | 4 CPU, 8 GB RAM, 50 GB disk |
+- [box](box): run once per box. Disk room, the clock, the journal's size, SSH and security updates, for every service on it.
+- [postgres](postgres): PostgreSQL with WAL archiving to S3-compatible storage; the reference weave.
+- [ethereum](ethereum): an Ethereum node, reth and Lighthouse, installed or adopted; no validator.
+- [vllm](vllm): vLLM serving one open-weights model behind an OpenAI-compatible API.
+- [store-edge](store-edge): Telegraf in a shop, buffering metrics while the uplink is down; no coder.
+- [valkey](valkey): Valkey as a cache or a small store.
+- [minecraft](minecraft): a Paper Minecraft server with world backups and build updates.
 
-`box` runs once per box; the service weaves come AFTER its goals and keep no copy of them. `postgres` is the reference weave: skills, restore drills, a major upgrade by sentence. Each weave's README says what it cannot do.
+Service weaves come AFTER the `box` weave's goals and keep no copy of them. Each weave's README says what it cannot do.
 
 ## Write or check a weave
 

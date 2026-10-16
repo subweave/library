@@ -51,7 +51,7 @@ One `RUN` step in the file: `systemctl restart`. Every other step is a `DO` task
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill postgres <name>` runs one now).
+`subweave drill postgres <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `stop`: stops PostgreSQL. `running` must fail within 3m and hold again within 10m. Every 30 days.
 

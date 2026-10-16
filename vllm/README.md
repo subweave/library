@@ -19,7 +19,7 @@ Disk room, the clock, the systemd journal, SSH and Ubuntu's security updates are
 
 ```
 driver
-├─ gpu-healthy
+├─ gpu-healthy   OVER 10m
 └─ installed
    ├─ running
    │  ├─ serving   also after box:room
@@ -39,7 +39,7 @@ driver
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill vllm <name>` runs one now).
+`subweave drill vllm <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `stop`: stops vLLM; loading the model again takes minutes. `running` must fail within 3m and hold again within 30m. Every 30 days.
 

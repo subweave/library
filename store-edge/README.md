@@ -44,7 +44,7 @@ installed
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill store-edge <name>` runs one now).
+`subweave drill store-edge <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `stop`: stops Telegraf; metrics wait in its disk buffer. `running` must fail within 3m and hold again within 10m. Every 30 days.
 

@@ -19,9 +19,9 @@ Run it once per box, before or beside the service weaves. They come AFTER its go
 ```
 room       every filesystem is less than 85% full
 journal    the systemd journal stays under $journal_max
-clock      NTP keeps the clock right
-ssh        SSH listens on $ssh_port and ufw lets it in
-patched    unattended-upgrades is on            IF updates == 'auto'
+clock      the clock keeps the right time from the internet
+ssh        SSH answers on port $ssh_port and the firewall lets it in
+patched    Ubuntu installs its security updates by itself   IF updates == 'auto'
 secure     no security update waits
 ```
 
@@ -54,7 +54,7 @@ With `updates` `ask`, `ASK BEFORE CHANGES version` holds `upgrade` for the perso
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill box <name>` runs one now).
+`subweave drill box <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `ntp-off`: turns off clock sync (`timedatectl set-ntp false`). `clock` must fail within 2h and hold again within 3h. Every 90 days; RESTORE turns sync back on.
 

@@ -25,7 +25,7 @@ installed
    ├─ guarded
    ├─ headroom   IF role == 'store'
    ├─ accepting
-   ├─ persisted   IF role == 'store', also after box:room
+   ├─ persisted   also after box:room; IF role == 'store'
    ├─ copied   IF copies
    ├─ held
    ├─ current
@@ -44,7 +44,7 @@ Most facts are `valkey-cli` commands: Valkey reports its state in numbers, and t
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill valkey <name>` runs one now).
+`subweave drill valkey <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `stop`: stops Valkey. `running` must fail within 3m and hold again within 10m. Every 30 days, only for a `store`: a cache would lose its keys.
 

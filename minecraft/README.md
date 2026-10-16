@@ -27,6 +27,7 @@ runtime
    ├─ running
    │  ├─ smooth
    │  ├─ saved   also after box:room
+   │  │  └─ drilled
    │  ├─ current   IF updates == 'auto'
    │  └─ quiet
    └─ old-logs
@@ -42,7 +43,7 @@ runtime
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill minecraft <name>` runs one now).
+`subweave drill minecraft <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `stop`: stops the server, which saves the worlds. `running` must fail within 3m and hold again within 10m. Every 30 days, only while nobody plays.
 

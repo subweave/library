@@ -83,7 +83,7 @@ installed
 
 ## Drills
 
-A drill breaks the service on purpose; the loop must notice and repair it (`subweave drill ethereum <name>` runs one now).
+`subweave drill ethereum <name>` runs one now ([Drills](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md#drills)).
 
 - `cl-stop`: stops Lighthouse. `running` must fail within 3m and hold again within 20m. Every 30 days, only when the weave installed the clients (no `reth_container`): adopted containers are yours.
 
