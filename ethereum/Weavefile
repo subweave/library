@@ -18,8 +18,8 @@ ARG network       MUST
 # Without containers the weave installs both clients. With both, it adopts reth and
 # Lighthouse in them: they run on host networking, and the containers and their images
 # stay their owner's.
-ARG reth_container        MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores"
-ARG lighthouse_container  MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores"
+ARG reth_container        MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores, like reth"
+ARG lighthouse_container  MAY  "the name of a Docker container: letters, digits, dashes, dots and underscores, like lighthouse"
 ARG reth_data=/var/lib/eth/reth              MAY  "reth's database directory on the host, an absolute path like /mnt/reth"
 ARG lighthouse_data=/var/lib/eth/lighthouse  MAY  "Lighthouse's database directory on the host, an absolute path like /mnt/lighthouse"
 ARG history=full  SHOULD
@@ -125,7 +125,8 @@ EOF
 GOAL running  "reth and Lighthouse are running"  AFTER installed, box:room  el_up AND cl_up
 
 ACTION start "Start the stopped clients" FOR running WITHIN 15m CHANGES restart
-  WHEN "a client stopped or exited, and its last log lines show no full disk and no database error"
+  WHEN "a client stopped or exited, its last log lines show no full disk and no database error, \
+        and no newer release's notes name the crash"
   RUN <<EOF
     if [ -n "$reth_container" ]; then
       for c in "$reth_container" "$lighthouse_container"; do
@@ -169,14 +170,15 @@ GOAL at-tip  "the newest block on the node is less than $lag old" \
 
 ACTION restart-lighthouse "Restart Lighthouse" FOR synced, at-tip, quiet WITHIN 10m CHANGES restart
   WHEN "Lighthouse runs but stopped following the chain: a lost engine connection, few peers \
-        or a stall in its log, while the host is not overloaded"
+        or a stall in its log, while the host is not overloaded and no newer release's notes \
+        name the failure"
   RUN <<EOF
     if [ -n "$lighthouse_container" ]; then docker restart -t 120 "$lighthouse_container"; else systemctl restart lighthouse; fi
   EOF
 
 ACTION restart-reth "Restart reth" FOR at-tip, quiet WITHIN 20m CHANGES restart
   WHEN "reth runs but its head stopped while Lighthouse is synced and sends it blocks, \
-        and the host is not overloaded"
+        the host is not overloaded, and no newer release's notes name the failure"
   RUN <<EOF
     if [ -n "$reth_container" ]; then docker stop -t 600 "$reth_container" && docker start "$reth_container"
     else systemctl restart reth; fi
@@ -199,7 +201,7 @@ SKILL sync-trouble WHEN "the node is behind, the head stopped moving, or the fir
   - Resync is the last resort: it deletes all chain data, and reth's part takes a day or more.
 EOF
 
-SKILL adopted-clients WHEN "reth and Lighthouse run in Docker containers this weave adopted" <<EOF
+SKILL adopted-clients WHEN "starting, restarting or changing reth or Lighthouse in Docker containers this weave adopted" <<EOF
   - The containers belong to their owner: the run command, the image and the flags live with
     them, often in a script beside the box's other services. docker inspect shows the
     command, mounts, restart policy and log settings; read it before changing anything.
@@ -471,9 +473,9 @@ KNOWN quiet NORMAL "2026-10-15T07:44:25.748250Z  WARN rpc::engine: Reth supports
 
 # ── Anything else ──────────────────────────────────────
 
-# Every goal but current and patched: an update is never a generic fix.
-ACTION fix "Fix the failing goal" FOR installed, running, synced, at-tip, peered, sealed, fenced, quiet \
-           WITHIN 30m CHANGES restart, config, data, network
+# Any goal no other action fits. It never changes a release: only update does, as
+# `updates` allows.
+ACTION fix "Fix the failing goal" WITHIN 30m CHANGES restart, config, data, network
   WHEN "no other action fits, or the fitting ones already failed"
   DO   "make the failing goal hold again without deleting chain data or changing the \
         reth or Lighthouse release"

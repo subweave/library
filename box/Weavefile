@@ -76,8 +76,8 @@ ACTION start-ssh "Start the SSH server" FOR ssh WITHIN 2m CHANGES restart IF NOT
   WHEN "nothing listens on the SSH port"
   RUN  systemctl enable --now ssh.socket 2>/dev/null || systemctl enable --now ssh
 
-ACTION open-ssh "Allow SSH in the firewall" FOR ssh WITHIN 2m CHANGES network IF NOT ssh_open
-  WHEN "ufw is active and does not allow SSH"
+ACTION open-ssh "Allow SSH in the firewall" FOR ssh WITHIN 2m CHANGES network IF sshd AND NOT ssh_open
+  WHEN "SSH listens, but ufw is active and does not allow it"
   RUN  ufw allow "$ssh_port/tcp"
 
 # ── Security updates ───────────────────────────────────

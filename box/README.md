@@ -39,7 +39,7 @@ secure     no security update waits
 | `cap-journal` | `journal`: a journald drop-in, then one vacuum to `$journal_max` | config, data |
 | `sync-clock` | `clock` | config |
 | `start-ssh` | `ssh`, when nothing listens | restart |
-| `open-ssh` | `ssh`, when ufw shuts it out | network |
+| `open-ssh` | `ssh`, when SSH listens and ufw shuts it out | network |
 | `unattend` | `patched` | config |
 | `upgrade` | `secure`: `unattended-upgrade` now | version, restart |
 
