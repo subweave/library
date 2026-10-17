@@ -56,7 +56,7 @@ installed
 5. **The request says "and run a validator too".** `NEVER "run a validator or hold staking keys"` refuses the whole request.
 6. **First sync.** `install` passes within 30 minutes, then `synced` fails for hours to days; the decider answers `wait`.
 7. **A container's log fills the disk.** `room` fails; `free-logs` vacuums the journal and empties container logs over 1 GB, in code.
-8. **The coder tries `ufw allow 8551/tcp`.** The gate refuses it ([§5](https://github.com/subweave/subweave/blob/main/LIMITS.md#5-gating-shell-commands-depends-on-their-stated-purpose)). If another change gets through and reth listens beyond localhost, `sealed` fails within a minute.
+8. **The coder tries `ufw allow 8551/tcp`.** The gate refuses it. If another change gets through and reth listens beyond localhost, `sealed` fails within a minute.
 9. **Lighthouse crashes on a hard fork its release does not support.** `running` fails. The decider reads `releases` and picks `update` over `start`. Installed: it updates. Adopted: the person gets `Update reth and Lighthouse yourself?`.
 
 ## Limits
@@ -64,6 +64,6 @@ installed
 - `NEEDS` asks for 1 TB, which fits `full`, `minimal` and pruned nodes; `archive` needs about 3 TB. The daemon measures the box's largest disk, wherever `reth_data` is.
 - Adopted containers keep their owner's images: this weave never upgrades them. With `updates=fix`, a hard fork shows first as a failure, so the node stops until its owner updates.
 - A release note that hides a migration gets past the `ASK`. `rollback` puts back binaries, not a migrated database.
-- No second node: a lost box is a full resync somewhere else ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).
-- Log lines and release notes go to the decider; a crafted note can try to steer it ([§3](https://github.com/subweave/subweave/blob/main/LIMITS.md#3-text-on-the-box-can-steer-the-decider)).
+- No second node: a lost box is a full resync somewhere else.
+- Log lines and release notes go to the decider; a crafted note can try to steer it.
 - No validator, no MEV relay, no slashing protection: the weave refuses them.
