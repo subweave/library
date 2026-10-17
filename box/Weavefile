@@ -3,7 +3,7 @@
 #   subweave run box
 
 ABOUT  "the box itself: room on every filesystem, the clock, the systemd journal's size, SSH and Ubuntu's security updates"
-FROM   ubuntu:24.04
+FROM   ubuntu
 NEEDS  1 CPU, 1 GB RAM, 10 GB DISK
 
 # ── What a request chooses ─────────────────────────────
