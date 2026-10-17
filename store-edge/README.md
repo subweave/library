@@ -9,7 +9,7 @@ while read shop host tills; do
 done < shops.txt
 ```
 
-This weave has no coder, no `fix`, no quoted fact and no `DO` step. Every goal has exactly one action, so it keeps working with no uplink and no model ([LIMITS §8](https://github.com/subweave/subweave/blob/main/LIMITS.md#8-offline-means-code-only)).
+This weave has no coder, no `fix`, no quoted fact and no `DO` step. Every goal has exactly one action, so it keeps working with no uplink and no model.
 
 Disk room, the journal, the clock, SSH and security updates are the [box](../box) weave's: run it first on each box. `draining` comes AFTER `box:room`.
 
@@ -52,6 +52,6 @@ installed
 
 - A value takes one word of the request, so the till list has commas and no spaces.
 - Telegraf's disk buffer is marked experimental by InfluxData. A long outage can fill the disk: the box weave's `room` fails, `draining` waits, nothing deletes metrics, and the person is asked.
-- The `quiet` check every 30 minutes is the only model call: about `$0.03` a month per box, `$10` for the chain, at the measured `$0.000022` a decision ([§12](https://github.com/subweave/subweave/blob/main/LIMITS.md#12-speed-and-cost)).
+- The `quiet` check every 30 minutes is the only model call: about `$0.03` a month per box, `$10` for the chain, at the measured `$0.000022` a decision.
 - No fleet view. `subweave ps` reaches 300 boxes one SSH session at a time.
-- A dead box sends nothing: pair each with a `heartbeat` channel ([§9](https://github.com/subweave/subweave/blob/main/LIMITS.md#9-one-box-no-failover)).
+- A dead box sends nothing: pair each with a `heartbeat` channel.

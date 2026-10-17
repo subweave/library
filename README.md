@@ -29,7 +29,6 @@ Service weaves come AFTER the `box` weave's goals and keep no copy of them. Each
 ## Write or check a weave
 
 - Format: [WEAVEFILE.md](https://github.com/subweave/subweave/blob/main/WEAVEFILE.md)
-- What Subweave does badly: [LIMITS.md](https://github.com/subweave/subweave/blob/main/LIMITS.md)
 - `subweave review <dir>` scores a weave against the authoring rules.
 
 ## Add a weave
